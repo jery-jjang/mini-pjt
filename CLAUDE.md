@@ -1,16 +1,26 @@
 # 프로젝트 규칙
 
 무엇을 왜 만드는지는 `SERVICE.md`에 있습니다. 이 문서는 어떻게 만드는지만 다룹니다.
-상세 인수 기준은 `.ouroboros/seed_bfee3756e9e9.yaml`에 있으며, 그 파일의 `miniprj/` 경로는 이 저장소 루트로 읽습니다.
+상세 인수 기준은 `.ouroboros/seed_bfee3756e9e9.yaml`에 있습니다(커밋되지 않는 로컬 파일). 그 파일과 경로, 파일 이름, 응답 형식이 다르면 이 문서가 우선합니다. 예: 명세의 `miniprj/eval_set.json`은 `evaluation/test_queries.json`, `miniprj/run_eval.py`는 `evaluation/run_eval.py`, `miniprj/tests/`는 `tests/`입니다.
 
 ## 기술 스택
 
 - Python 3.14.8, 로컬 venv. Docker는 쓰지 않는다. (의존성이 3.14에 설치되지 않으면 사용자에게 알리고 멈춘다)
-- LangChain, LangGraph
+- LangChain 1.4.7, LangGraph 1.2.19, langchain-aws 1.9.1, FastAPI 0.162.0 (실습 환경과 같은 버전)
 - 모델은 Amazon Bedrock Claude Sonnet 4.5: `us.anthropic.claude-sonnet-4-5-20250929-v1:0`, 리전 `us-east-1`, `langchain-aws`의 `ChatBedrockConverse`
 - Agent 생성은 `langchain.agents`의 `create_agent`를 쓴다
 - API 서버는 FastAPI, 저장소는 SQLite, 테스트는 pytest
-- LangSmith 추적은 끈다
+- LangSmith 추적은 끈다. `.env`에 값이 있어도 앱 시작 시 코드에서 `LANGSMITH_TRACING=false`로 강제한다
+
+## 실행 방법
+
+```
+python -m venv .venv                      가상환경 만들기 (처음 한 번)
+.venv\Scripts\python -m pip install -e .  의존성 설치
+.venv\Scripts\python -m uvicorn app:app   서버 실행
+.venv\Scripts\python -m pytest tests -q   배선 테스트 (실제 LLM 호출 없음)
+.venv\Scripts\python evaluation/run_eval.py   25건 평가 (실제 Bedrock 호출)
+```
 
 ## 폴더 구조 (제출 규약. 바꾸지 않는다)
 
@@ -18,6 +28,8 @@
 SERVICE.md            무엇을 왜 만드는가
 CLAUDE.md             이 문서
 README.md             주제, 설계, 핵심 의사결정 2가지
+pyproject.toml        의존성과 Python 버전
+.gitignore            .venv/, var/, outbox/, .env, .claude, .ouroboros 제외
 app.py                POST /query 진입점 (FastAPI)
 src/agent.py          메인 에이전트 그래프
 src/tools.py          도메인 도구 (등록, 조회, 교정, 감시)
@@ -27,9 +39,12 @@ src/scheduler.py      주기 검색과 '지금 1회 실행'
 src/sources.py        취약점 정보원 (오프라인 스냅샷, 실시간 NVD/OSV)
 src/auth.py           로그인, 토큰, 팀·역할 확인
 src/storage.py        SQLite 접근
+src/config.py         설정값 (환경 변수에서 읽고 기본값을 둔다)
 data/                 취약점 스냅샷(1차·2차 시점), 초기 시드 데이터
 evaluation/           test_queries.json, 채점 스크립트 run_eval.py, 평가 리포트
 tests/                pytest (가짜 모델 주입, 실제 LLM 호출 없음)
+var/                  실행 중 만들어지는 SQLite 파일 (커밋하지 않는다)
+outbox/               저장된 알림 메일 파일 (커밋하지 않는다)
 ```
 
 - RAG는 쓰지 않으므로 `src/retriever.py`는 만들지 않는다.
@@ -38,21 +53,26 @@ tests/                pytest (가짜 모델 주입, 실제 LLM 호출 없음)
 
 - `POST /query`로 받고 본문의 `question` 필드를 읽는다. `question`만 필수다.
 - 로그인 토큰은 선택이다(`Authorization` 헤더). 토큰이 없으면 기본 평가 계정(팀 A 팀원)으로 처리한다.
-- 답은 아래 키로 돌려준다. 앞의 세 키는 제출 규약이고, 나머지는 자체 채점용이며 항상 채운다.
+- 답은 아래 여섯 키로 돌려주며 항상 모두 채운다.
 
 | 키 | 내용 |
 |---|---|
 | `answer` | 사용자에게 보여 줄 답변 문장 |
 | `contexts` | 답의 근거로 쓴 취약점 레코드 목록(없으면 빈 목록) |
-| `trace` | 실행 단계 기록(호출한 도구와 인자) |
+| `trace` | 실행 단계 기록(도구 이름, 인자, 결과 요약을 호출 순서대로) |
 | `label` | `answer` / `no_answer` / `guardrail` 중 하나 |
 | `cve_ids` | 답에 포함된 CVE ID 목록(CVE가 없으면 원래 ID) |
-| `tools_called` | 호출한 도구 이름 목록 |
+| `tools_called` | 호출한 도구 이름 목록(중복 없이, 채점용) |
+
+- 등록은 두 번의 요청으로 이뤄진다. 첫 요청에서 후보 1~3개를 제시하고 계정별 '대기 중인 후보'를 SQLite에 저장한다. 같은 계정의 다음 요청("1번으로 확정")이 그 후보를 확정한다. 요청 형식은 바꾸지 않는다.
+- 프로젝트와 프로젝트별 알림 수신 주소는 `data/`의 초기 시드에 넣어 둔다. 대화로 프로젝트를 새로 만드는 기능은 만들지 않는다.
 
 ## 평가셋 형식
 
 - 파일은 `evaluation/test_queries.json`, 25건.
-- 필수 칸: `id`, `question`, `type`. `id`는 중복 금지.- `type` 값과 건수: `register` 5, `applicability` 6, `status` 5, `no_answer` 4, `guardrail` 5.
+- 필수 칸: `id`, `question`, `type`. `id`는 중복 금지.
+- `type` 값과 건수: `register` 5, `applicability` 6, `status` 5, `no_answer` 4, `guardrail` 5.
+- `type`별 기대 라벨: `register`, `applicability`, `status`는 `answer`, `no_answer`는 `no_answer`, `guardrail`은 `guardrail`.
 - 선택 칸: `requester`(`team_a_member` / `team_b_member` / `security_admin`, 비어 있으면 `team_a_member`), `expected_label`, `expected_cve_ids`, `expected_tools`, `forbidden`.
 - guardrail은 네 유형(다른 팀 데이터, 공격 방법, 지시 조작, 무관한 질문)을 각각 1건 이상 넣는다.
 - 채점: 라벨 일치, 기대 CVE ID 전부 포함(추가 허용), 필수 도구 호출 여부, `forbidden` 문자열이 답에 없을 것.
@@ -83,11 +103,11 @@ tests/                pytest (가짜 모델 주입, 실제 LLM 호출 없음)
 - 점수는 NVD 우선, 없으면 CNA/OSV, 둘 다 없으면 '점수 미정'. GHSA 별칭은 연결된 CVE ID로 통일한다.
 - 알림은 기본으로 메일 내용을 파일에 저장한다. 요약에는 CVE ID, 점수 또는 KEV 여부, 제품과 버전을 넣는다.
 - 기본 모드는 `data/`의 오프라인 스냅샷만 쓴다. 실시간 NVD/OSV 조회는 설정으로 켠다.
-- 스케줄러 주기(기본 6시간), 연속 실패 통지 횟수(기본 2회), 실제 발송 여부는 설정값으로 둔다.
+- 스케줄러 주기(기본 6시간), 연속 실패 통지 횟수(기본 2회), 실제 발송 여부, 실시간 조회 여부는 `src/config.py`의 설정값으로 둔다.
 
 ## 하지 말 것
 
-- 요청하지 않은 파일을 새로 만들지 않는다.
+- 폴더 구조에 없는 파일은 요청 없이 새로 만들지 않는다.
 - 기존 파일을 통째로 다시 쓰지 않는다. 바뀐 부분만 고친다.
 - 폴더 구조와 주고받는 형식을 바꾸지 않는다.
 - 통과한 평가 문항을 지우거나, 통과시키려고 문항의 기대값을 고치지 않는다.
