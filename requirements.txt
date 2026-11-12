@@ -1,0 +1,20 @@
+# 실습 환경과 같은 버전으로 고정
+langchain==1.4.7
+langgraph==1.2.19
+langchain-aws==1.9.1
+fastapi==0.162.0
+
+# 서버, 설정, 문서 검색
+uvicorn==0.54.0
+python-dotenv==1.2.4
+rank-bm25==0.2.2
+
+# 테스트
+pytest==9.2.0
+httpx==0.28.1
+
+# RAGAS 평가 (evaluation/run_ragas.py를 돌릴 때만 필요)
+# ragas가 의존하는 scikit-network는 Python 3.14용 배포 파일이 없어 설치되지 않는다.
+# 평가 지표에는 쓰이지 않으므로, 아래 두 줄로 그것만 빼고 따로 설치한다.
+#   pip install --no-deps ragas==0.4.3
+#   pip install datasets tiktoken langchain-community==0.4.2 langchain-openai nest-asyncio appdirs diskcache instructor typer rich networkx pillow tqdm openai
