@@ -26,7 +26,11 @@ const STORE_KEY = "vulnwatch.account";
 
 const $ = (id) => document.getElementById(id);
 // generation: 계정을 바꾸거나 대화를 지울 때마다 1씩 올린다. 그 전에 보낸 요청의 답은 화면에 넣지 않는다.
-const state = { accountId: loadAccount(), messages: [], selected: null, busy: false, role: null, generation: 0 };
+// view: 근거 문서 보기 방식(sw, cve). 다른 답변을 골라도 유지한다. pick: 고른 CVE ID 또는 SW 이름.
+const state = {
+  accountId: loadAccount(), messages: [], selected: null, busy: false, role: null, generation: 0,
+  view: "sw", pick: null,
+};
 
 // ---------------- 작은 도우미 ----------------
 
@@ -223,6 +227,7 @@ function renderChat() {
       el("div", { class: "msg-text", text: plain(r.answer) }),
       el("div", { class: "msg-meta" },
         el("span", { class: `tag ${label.cls}`, text: label.text }),
+        el("span", { class: "selected-mark", text: "▸ 상세 보는 중" }),
         r.cve_ids.length ? el("span", { text: `취약점 ${r.cve_ids.length}건` }) : null,
         r.tools_called.length ? el("span", { text: `도구 ${r.tools_called.length}개` }) : null));
     const candidates = candidatesOf(r);
@@ -257,6 +262,7 @@ async function ask(question) {
     if (generation !== state.generation) return; // 그사이 계정을 바꿨거나 대화를 지웠다
     state.messages.push({ role: "bot", response });
     state.selected = state.messages.length - 1;
+    state.pick = null;
     renderDetail();
     if (response.tools_called.includes("confirm_registration") || response.tools_called.includes("propose_candidates")) {
       loadProjects(); // 등록이 바뀌었을 수 있다
@@ -281,6 +287,7 @@ function setBusy(busy) {
 
 function select(index) {
   state.selected = index;
+  state.pick = null; // 다른 답변이면 그 답변의 첫 CVE·SW부터 본다
   renderChat();
   renderDetail();
   if (window.matchMedia("(max-width: 1180px)").matches) $("detail-title").scrollIntoView({ block: "start" });
@@ -296,37 +303,149 @@ function renderDetail() {
     return;
   }
   const r = m.response;
-  const label = LABELS[r.label] || { text: r.label, cls: "tag-neutral" };
+  // 라벨·취약점 수·도구 수는 답변 말풍선에 이미 보이므로 여기서는 근거 문서와 실행 기록만 보여 준다
   body.replaceChildren(
-    row("라벨", el("span", { class: `tag ${label.cls}`, text: `${label.text} (${r.label})` })),
-    row("답에 나온 취약점", r.cve_ids.length
-      ? el("div", { class: "id-list" }, r.cve_ids.map((id) => el("span", { class: "tag tag-neutral mono", text: id })))
-      : el("span", { class: "muted", text: "없음" })),
-    row("호출한 도구", r.tools_called.length
-      ? el("div", { class: "id-list" }, r.tools_called.map((t) => el("span", { class: "tag tag-neutral mono", text: t })))
-      : el("span", { class: "muted", text: "없음" })),
-    block(`근거 문서 (contexts) ${r.contexts.length}건`, r.contexts.length > 0,
-      r.contexts.length
-        ? r.contexts.map((c) => {
-            const { links, rest } = splitLinks(c.text);
-            return el("div", { class: "doc" },
-              el("div", { class: "mono", text: c.doc_id }),
-              links.length
-                ? el("div", { class: "links", role: "list", "aria-label": `${c.doc_id} 참고 링크` },
-                    links.map((l) => el("a", {
-                      role: "listitem", class: "link-chip", href: l.url, target: "_blank", rel: "noopener noreferrer",
-                      title: l.url, "aria-label": `${l.name}에서 ${c.doc_id} 보기 (새 탭)`,
-                    }, l.name, externalIcon())))
-                : el("p", { class: "muted small", text: "참고 링크 없음 (교육용 가상 항목)" }),
-              el("pre", { class: "code", text: rest }));
-          })
-        : [el("p", { class: "muted small", text: "이 답변에는 근거로 쓴 취약점 문서가 없습니다." })]),
+    renderContexts(r.contexts),
     block(`실행 기록 (trace) ${r.trace.length}단계`, false,
       r.trace.map((t, i) => el("div", { class: "step" },
         el("div", { class: "mono", text: `${i + 1}. ${t.step}` }),
         el("div", { class: "detail-label", text: "입력" }), el("pre", { class: "code", text: t.input }),
         el("div", { class: "detail-label", text: "출력" }), el("pre", { class: "code", text: t.output })))),
   );
+}
+
+// ---------------- 근거 문서: SW / CVE ----------------
+// 근거 문서 본문은 서버 코드가 만드는 고정 형식이다(src/retriever.py의 _doc_text와 tools.add_context):
+//   제목 "ID (별칭: ...)", "참고 링크: ...", "점수: 10.0 (NVD) / CISA KEV: 등재",
+//   "영향 제품과 버전: log4j 2.0.1 이상 ...; nginx ...", "설명: ...", 그리고 0개 이상의 "판정: ..." 줄.
+
+const VIEWS = [
+  { id: "sw", text: "SW" },
+  { id: "cve", text: "CVE" },
+];
+
+/** 근거 문서 하나를 화면에 쓸 조각으로 나눈다. */
+function parseDoc(context) {
+  const { links, rest } = splitLinks(context.text);
+  const lines = rest.split("\n");
+  const doc = {
+    id: context.doc_id, title: lines[0] || context.doc_id, links,
+    score: null, scoreText: "점수 미정", kev: false, affects: "", products: [], description: "", verdicts: [],
+  };
+  for (const line of lines.slice(1)) {
+    if (line.startsWith("점수:")) {
+      const m = line.match(/^점수:\s*(.+?)\s*\/\s*CISA KEV:\s*(.+)$/);
+      if (m) {
+        doc.scoreText = m[1];
+        const num = parseFloat(m[1]);
+        doc.score = Number.isFinite(num) ? num : null;
+        doc.kev = m[2].trim() === "등재";
+      }
+    } else if (line.startsWith("영향 제품과 버전:")) {
+      doc.affects = line.slice("영향 제품과 버전:".length).trim();
+      doc.products = doc.affects.split(";").map((p) => p.trim().split(/\s+/)[0]).filter(Boolean);
+    } else if (line.startsWith("설명:")) {
+      doc.description = line.slice("설명:".length).trim();
+    } else if (line.startsWith("판정:")) {
+      const text = line.slice("판정:".length).trim();
+      const m = text.match(/^(.+?)은 영향 범위(에 들어 해당함| 밖이라 해당하지 않음)$/);
+      doc.verdicts.push(m ? { sw: m[1], affected: m[2].startsWith("에"), text } : { sw: null, affected: null, text });
+    } else if (doc.description && line) {
+      doc.description += `\n${line}`; // 설명문이 여러 줄이면 이어 붙인다
+    }
+  }
+  return doc;
+}
+
+/** 이 문서가 묶이는 SW 이름들. 판정 줄이 있으면 등록된 SW 이름, 없으면 영향 제품 이름. */
+function swKeys(doc) {
+  const named = doc.verdicts.map((v) => v.sw).filter(Boolean);
+  return named.length ? [...new Set(named)] : doc.products;
+}
+
+function byScore(a, b) {
+  return (b.score ?? -1) - (a.score ?? -1);
+}
+
+function renderContexts(contexts) {
+  if (!contexts.length) {
+    return el("p", { class: "muted small", text: "이 답변에는 근거로 쓴 취약점 문서가 없습니다." });
+  }
+  const docs = contexts.map(parseDoc);
+  const view = state.view;
+
+  const switcher = el("div", { class: "segmented", role: "group", "aria-label": "근거 문서 보기 방식" },
+    VIEWS.map((v) => el("button", {
+      type: "button", class: "segment", "aria-pressed": String(view === v.id),
+      onclick: () => { state.view = v.id; state.pick = null; renderDetail(); },
+    }, v.text)));
+
+  let content;
+  if (view === "cve") {
+    const options = docs.map((d) => ({ key: d.id, label: d.id, sub: d.score === null ? "점수 미정" : String(d.score), kev: d.kev }));
+    const pick = pickKey(options);
+    content = [picker(options, pick, "CVE 고르기"), ...docs.filter((d) => d.id === pick).map(docCard)];
+  } else {
+    const groups = new Map();
+    for (const d of docs) for (const key of swKeys(d)) groups.set(key, [...(groups.get(key) || []), d]);
+    const options = [...groups.entries()].map(([key, list]) => ({ key, label: key, sub: `${list.length}건`, kev: list.some((d) => d.kev) }));
+    const pick = pickKey(options);
+    content = [picker(options, pick, "SW 고르기"), ...(groups.get(pick) || []).slice().sort(byScore).map(docCard)];
+  }
+  // 제목 없이 보기 버튼과 문서 카드만 둔다
+  return el("div", { class: "contexts" }, switcher, ...content);
+}
+
+/** 고른 항목이 목록에 없으면 첫 항목을 고른다. */
+function pickKey(options) {
+  if (!options.some((o) => o.key === state.pick)) state.pick = options.length ? options[0].key : null;
+  return state.pick;
+}
+
+function picker(options, pick, label) {
+  // 항목이 많으면 버튼이 패널을 다 차지하므로 드롭다운으로 고른다
+  if (options.length > 4) {
+    const select = el("select", { class: "pick-select", "aria-label": label },
+      options.map((o) => el("option", { value: o.key, text: `${o.label} · ${o.sub}${o.kev ? " · KEV" : ""}` })));
+    select.value = pick;
+    select.addEventListener("change", () => { state.pick = select.value; renderDetail(); });
+    return el("div", { class: "field" }, el("span", { class: "detail-label", text: `${label} (${options.length}개)` }), select);
+  }
+  return el("div", { class: "picker", role: "group", "aria-label": label },
+    options.map((o) => el("button", {
+      type: "button", class: "pick", "aria-pressed": String(o.key === pick),
+      onclick: () => { state.pick = o.key; renderDetail(); },
+    },
+      el("span", { class: "pick-label", text: o.label }),
+      el("span", { class: "pick-sub", text: o.sub }),
+      o.kev ? el("span", { class: "tag tag-danger", text: "KEV" }) : null)));
+}
+
+function docCard(doc) {
+  const scoreCls = doc.score === null ? "tag-neutral" : doc.score >= 9 ? "tag-danger" : doc.score >= 7 ? "tag-warn" : "tag-neutral";
+  return el("article", { class: "doc-card", "aria-label": doc.id },
+    el("header", { class: "doc-head" },
+      el("span", { class: "mono doc-id", text: doc.title }),
+      el("span", { class: "doc-badges" },
+        el("span", { class: `tag ${scoreCls}`, text: `점수 ${doc.scoreText}` }),
+        doc.kev ? el("span", { class: "tag tag-danger", text: "KEV 등재" }) : el("span", { class: "tag tag-neutral", text: "KEV 미등재" }))),
+    doc.affects ? el("div", { class: "doc-row" }, el("span", { class: "detail-label", text: "영향 SW" }), el("span", { class: "small", text: doc.affects })) : null,
+    doc.verdicts.length
+      ? el("div", { class: "doc-row" }, el("span", { class: "detail-label", text: "판정" }),
+          el("ul", { class: "verdicts" }, doc.verdicts.map((v) => el("li", {},
+            v.affected === null ? null : el("span", { class: `tag ${v.affected ? "tag-danger" : "tag-ok"}`, text: v.affected ? "해당" : "해당 안 함" }),
+            " ", v.text))))
+      : null,
+    doc.links.length
+      ? el("div", { class: "links", role: "list", "aria-label": `${doc.id} 참고 링크` },
+          doc.links.map((l) => el("a", {
+            role: "listitem", class: "link-chip", href: l.url, target: "_blank", rel: "noopener noreferrer",
+            title: l.url, "aria-label": `${l.name}에서 ${doc.id} 보기 (새 탭)`,
+          }, l.name, externalIcon())))
+      : el("p", { class: "muted small", text: "참고 링크 없음 (교육용 가상 항목)" }),
+    doc.description
+      ? el("details", { class: "doc-desc" }, el("summary", { text: "설명문" }), el("p", { class: "small", text: doc.description }))
+      : null);
 }
 
 // 근거 문서의 "참고 링크:" 줄은 서버 코드가 만든 고정 형식이다: "이름 URL | 이름 URL ..."
@@ -365,9 +484,6 @@ function externalIcon() {
   return svg;
 }
 
-function row(name, value) {
-  return el("div", { class: "detail-row" }, el("div", { class: "detail-label", text: name }), value);
-}
 
 function block(title, open, children) {
   return el("details", { class: "block", open }, el("summary", { text: title }), el("div", { class: "block-body" }, children));

@@ -16,6 +16,8 @@
   --warn-bg: rgba(251, 191, 36, 0.14);
   --danger-bg: rgba(248, 113, 113, 0.14);
   --user-bubble: #2b3a55;
+  --selected-bg: rgba(34, 197, 94, 0.12);
+  --selected-shadow: rgba(34, 197, 94, 0.25);
   --mono: ui-monospace, "Cascadia Code", "Consolas", "D2Coding", monospace;
   --sans: system-ui, -apple-system, "Segoe UI", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif;
   --radius: 10px;
@@ -41,6 +43,8 @@
     --warn-bg: #fef3c7;
     --danger-bg: #fee2e2;
     --user-bubble: #e2e8f0;
+    --selected-bg: #f0fdf4;
+    --selected-shadow: rgba(21, 128, 61, 0.18);
     color-scheme: light;
   }
 }
@@ -176,7 +180,20 @@ select { min-height: 44px; padding: 0 var(--space-3); }
   text-align: left; width: auto; cursor: pointer;
 }
 .msg-bot:hover { border-color: var(--muted); }
-.msg-bot[aria-pressed="true"] { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary); }
+/* 고른 답변: 굵은 테두리, 왼쪽 강조 막대, 옅은 배경, "상세 보는 중" 표시로 분명하게 */
+.msg-bot[aria-pressed="true"] {
+  border: 2px solid var(--primary);
+  border-left-width: 6px;
+  background: var(--selected-bg);
+  box-shadow: 0 4px 16px var(--selected-shadow);
+}
+.msg-bot .selected-mark { display: none; }
+.msg-bot[aria-pressed="true"] .selected-mark {
+  display: inline-flex; align-items: center; gap: 4px;
+  color: var(--primary); font-weight: 600;
+}
+.msg-bot:not([aria-pressed="true"]) { opacity: 0.85; }
+.msg-bot:not([aria-pressed="true"]):hover { opacity: 1; }
 .msg-error { align-self: flex-start; background: var(--danger-bg); border: 1px solid var(--danger); color: var(--text); }
 .msg-text { white-space: pre-wrap; overflow-wrap: anywhere; }
 .msg-meta { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-2); align-items: center; font-size: 0.8125rem; color: var(--muted); }
@@ -270,3 +287,40 @@ dialog::backdrop { background: rgba(2, 6, 23, 0.6); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }
 }
+
+/* 근거 문서 보기: 전체 / CVE별 / SW별 */
+.segmented {
+  /* 응답 상세 패널 폭에 맞춰 늘어나고, 버튼은 남는 폭을 똑같이 나눠 갖는다 */
+  display: flex; align-self: stretch; width: 100%; padding: 3px; gap: 3px;
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface);
+}
+.segment {
+  flex: 1 1 0; min-height: 44px; min-width: 0; padding: 0 var(--space-3);
+  border: none; border-radius: 7px; background: transparent; color: var(--muted); font-weight: 500;
+  transition: background-color 150ms ease, color 150ms ease;
+}
+.segment:hover { color: var(--text); }
+.segment[aria-pressed="true"] { background: var(--primary); color: var(--on-primary); }
+.picker { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.pick {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 var(--space-3);
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface);
+  transition: border-color 150ms ease, background-color 150ms ease;
+}
+.pick:hover { border-color: var(--muted); }
+.pick[aria-pressed="true"] { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary); }
+.pick-label { font-family: var(--mono); font-size: 0.8125rem; overflow-wrap: anywhere; text-align: left; }
+.pick-sub { color: var(--muted); font-size: 0.75rem; white-space: nowrap; }
+.doc-card {
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface);
+  padding: var(--space-3); display: flex; flex-direction: column; gap: var(--space-2);
+}
+.doc-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--space-2); align-items: center; }
+.doc-id { font-weight: 600; overflow-wrap: anywhere; }
+.doc-badges { display: inline-flex; flex-wrap: wrap; gap: var(--space-1); }
+.doc-row { display: flex; flex-direction: column; gap: 2px; }
+.verdicts { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-1); font-size: 0.875rem; }
+.doc-desc summary { cursor: pointer; min-height: 32px; display: flex; align-items: center; color: var(--muted); font-size: 0.875rem; }
+.doc-desc p { margin: var(--space-1) 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.pick-select { min-height: 44px; width: 100%; padding: 0 var(--space-3); font-family: var(--mono); font-size: 0.875rem; }
+.contexts { display: flex; flex-direction: column; gap: var(--space-3); }
