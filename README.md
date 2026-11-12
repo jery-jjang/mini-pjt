@@ -14,7 +14,7 @@
 |---|---|---|---|
 | 1 | LCEL chain (Pydantic 구조화 출력) | Day 1 | `프롬프트 \| 모델.with_structured_output(...)` 체인 세 곳: 등록 문장의 식별자 후보 제시(`src/tools.py`), 알림 메일의 취약점 요약(`src/notifier.py`), 평가의 LLM 채점(`evaluation/run_eval.py`) |
 | 2 | ReAct (도구 자율 선택) | Day 3 | `create_agent`에 도구 7개를 붙여 모델이 질문에 맞는 도구를 고른다(`src/agent.py`) |
-| 3 | RAG | Day 2 | 취약점 설명문 20건을 BM25로 검색해 답의 근거로 쓰고 응답의 `contexts`에 싣는다. 질문에 CVE·GHSA ID가 있으면 그 문서를 먼저 준다(`src/retriever.py`) |
+| 3 | RAG | Day 2 | 취약점 레코드 20건(점수, KEV 여부, 영향 버전 범위, 설명문)을 BM25로 검색해 답의 근거로 쓰고 응답의 `contexts`에 싣는다. 질문에 CVE·GHSA ID가 있으면 그 문서를 먼저 준다(`src/retriever.py`) |
 | 4 | 도구 다중 | Day 4 | SQLite(등록·현황), 버전 판정 코드, 문서 검색, 검색 실행을 각각 도구로 만들었다(`src/tools.py`) |
 | 6 | 가드레일 | Day 5 | 다른 팀 데이터 차단과 '근거 없음' 판정은 코드가 한다. 공격 방법·지시 조작·무관한 질문은 모델이 거절 도구를 불러 기록한다. 모델에 보내는 글에서는 프로젝트명과 팀명을 가린다 |
 | 11 | Observability · Trace | Day 7 | 응답의 `trace`와 로컬 파일 `var/traces.jsonl`에 단계별 입력과 출력을 남긴다 |
@@ -88,7 +88,7 @@ python -m venv .venv
 
 ```
 .venv\Scripts\python -m uvicorn app:app                    서버 실행 (http://127.0.0.1:8000)
-.venv\Scripts\python -m pytest tests -q                    자동 테스트 85건 (실제 LLM 호출 없음)
+.venv\Scripts\python -m pytest tests -q                    자동 테스트 87건 (실제 LLM 호출 없음)
 .venv\Scripts\python evaluation/run_eval.py --round 1      인-아웃 세트 25건 평가 (실제 Bedrock 호출)
 .venv\Scripts\python evaluation/run_ragas.py --round 1     RAGAS 지표 (설치 방법은 requirements.txt 아래쪽)
 .venv\Scripts\python -m src.scheduler --snapshot T2        검색 1회 실행 (알림 메일은 outbox/에 저장)
@@ -112,18 +112,29 @@ curl -X POST http://127.0.0.1:8000/query -H "Content-Type: application/json" -d 
 
 ## RAGAS 평가 결과
 
-- context_recall: 0.84
-- context_precision: 0.42
-- faithfulness: 0.35
+- context_recall: 0.90
+- context_precision: 0.70
+- faithfulness: 0.77
 - answer_relevancy: 0.61
 
-2차 평가의 응답으로 측정했습니다(`evaluation/run_ragas.py`, 문항별 점수는 [evaluation/round2_report.md](evaluation/round2_report.md)). 대상은 근거 문서가 있는 답변형 문항 10건이며, 거절과 근거 없음 문항은 문서 검색을 하지 않아 뺐습니다. 정답 문장은 인-아웃 세트의 기대 항목과 취약점 설명문으로 만들었습니다.
+2차 평가의 응답으로 측정했습니다(`evaluation/run_ragas.py`, 문항별 점수는 [evaluation/round2_report.md](evaluation/round2_report.md)). 대상은 근거 문서가 있는 답변형 문항 10건이며, 거절과 근거 없음 문항은 문서 검색을 하지 않아 뺐습니다. 정답 문장은 인-아웃 세트의 기대 항목과 취약점 설명문으로 만들었습니다. 한 번 측정한 결과입니다.
 
-숫자를 읽을 때 알아 둘 점:
+| 지표 | 첫 측정 | 개선 후 |
+|---|---|---|
+| context_recall | 0.84 | 0.90 |
+| context_precision | 0.42 | 0.70 |
+| faithfulness | 0.35 | 0.77 |
+| answer_relevancy | 0.61 | 0.61 |
 
-- **측정 3건이 빠졌습니다.** 1번의 context_recall, 5번과 7번의 faithfulness는 평가 모델의 출력이 길이 제한에 걸려 잘려서 점수가 나오지 않았고, 평균에서 제외했습니다.
-- **faithfulness가 낮은 이유**: 답변에는 점수, KEV 등재 여부, 등록 항목이 들어가는데, `contexts`에는 취약점 설명문만 싣습니다. 그 내용은 도구의 판정 결과에서 온 것이라 틀린 답은 아니지만, RAGAS는 `contexts`에 없는 문장을 근거 없는 문장으로 셉니다. 인-아웃 세트에서는 같은 답변이 25건 모두 통과했습니다.
-- **context_precision이 낮은 이유**: 현황 조회처럼 프로젝트의 취약점을 모두 싣는 문항에서, 정답에 필요한 문서보다 많은 문서가 실립니다(5, 7, 16, 17, 18번이 0점).
+첫 측정에서 두 지표가 낮았던 원인과 고친 내용:
+
+- **근거 문서에 답의 근거가 다 들어 있지 않았습니다.** 답변에는 점수, KEV 등재 여부, 해당 여부가 들어가는데 `contexts`에는 취약점 설명문만 실었습니다. 그래서 RAGAS가 그 문장들을 근거 없는 문장으로 셌습니다. `contexts`의 문서를 취약점 레코드 전체(점수와 출처, KEV 여부, 영향 버전 범위, 설명문)로 바꾸고, 그 요청에서 내린 판정("Apache Log4j 2.14.1은 영향 범위에 들어 해당함")을 덧붙였습니다.
+- **측정 3건이 빠졌습니다.** 평가 모델의 출력이 길이 제한에 걸려 잘린 탓이라 제한을 늘렸고, 개선 후에는 40개 측정이 모두 나왔습니다. 첫 측정의 평균은 빠진 3건을 제외한 값입니다.
+
+남은 낮은 점수:
+
+- **현황 조회 문항(5, 7번)과 GHSA 별칭 문항(16번)의 context_precision이 0점**입니다. 현황 답변의 근거는 프로젝트의 등록 목록인데 `contexts`에는 취약점 문서만 싣기 때문입니다. 7번은 같은 이유로 context_recall도 0점입니다.
+- **answer_relevancy는 그대로**입니다. 프로젝트명을 가린 질문("[프로젝트2] 프로젝트에 해당하는 취약점")과 답변을 비교하는 지표라, 여러 건을 나열하는 답변에서 낮게 나옵니다.
 
 ## 인-아웃 세트 통과율 (자체 평가)
 
@@ -164,8 +175,7 @@ curl -X POST http://127.0.0.1:8000/query -H "Content-Type: application/json" -d 
 
 **남은 한계 · 향후 개선 방향**
 
-- RAGAS의 faithfulness(0.35)와 context_precision(0.42)이 낮습니다. `contexts`에 설명문만 싣고 점수·KEV·영향 범위는 싣지 않는 것, 현황 조회에서 문서를 필요 이상으로 싣는 것이 원인입니다. `contexts`를 판정에 쓴 취약점 레코드 전체로 바꾸면 개선될 것으로 보지만 확인하지 않았습니다.
-- RAGAS 측정 3건이 평가 모델의 출력 길이 제한으로 빠졌습니다.
+- 현황 조회 답변의 근거인 프로젝트 등록 목록은 `contexts`에 싣지 않습니다. 그래서 현황 문항의 RAGAS 점수가 낮습니다. 등록 목록에는 프로젝트명이 들어 있어 평가 모델에 보내기 전에 가려야 하므로 이번에는 넣지 않았습니다.
 - 라벨이 모델의 도구 선택에 기댑니다. 모델이 도구를 부르지 않고 "확인할 수 없음"이라고 답하면 라벨이 `answer`로 남습니다.
 - 취약점 데이터는 고정 사본 20건이고, 실시간 NVD/OSV 조회와 오탐 교정은 만들지 않았습니다. 실제 메일 발송도 하지 않고 파일로 저장합니다.
 - CVE가 없는 GHSA 사례는 여섯 제품에서 실제 항목을 찾지 못해 교육용 가상 항목 1건으로 대신했습니다.
@@ -177,9 +187,9 @@ curl -X POST http://127.0.0.1:8000/query -H "Content-Type: application/json" -d 
 
 - `src/agent.py:122` — 메인 에이전트(`answer_question`): 이름 가리기, `create_agent`, 라벨 결정
 - `src/agent.py:18` — 시스템 프롬프트
-- `src/tools.py:395` — 에이전트용 도구 7개(`build_tools`)
-- `src/tools.py:227` — 해당 여부 조회 도구(`check_vulnerabilities`)
-- `src/retriever.py:24` — RAG 파이프라인(`VulnRetriever`)
+- `src/tools.py:400` — 에이전트용 도구 7개(`build_tools`)
+- `src/tools.py:231` — 해당 여부 조회 도구(`check_vulnerabilities`)
+- `src/retriever.py:48` — RAG 파이프라인(`VulnRetriever`)
 - `src/matching.py:35` — 해당 여부 판정(`is_affected`), `src/matching.py:99` — 알림 판정(`alert_reason`)
 - `src/auth.py:23` — 다른 팀 접근 차단(`can_access`)
 - `src/scheduler.py:19` — 검색 1회 실행(`run_once`), `src/notifier.py:70` — 알림 메일 저장
