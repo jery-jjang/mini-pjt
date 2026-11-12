@@ -12,6 +12,7 @@
 import argparse
 import csv
 import json
+import math
 import os
 import sys
 import time
@@ -33,7 +34,7 @@ from src.config import get_settings  # noqa: E402
 from src.retriever import ID_PATTERN  # noqa: E402
 
 CATEGORY_LABEL = {"positive": "answer", "negative": "no_answer", "guardrail": "guardrail"}
-PASS_LINE = 20
+PASS_RATE = 0.8  # 통과 기준: 전체의 80% 이상 (올림)
 
 
 # ---------------- 인-아웃 세트 읽기 ----------------
@@ -92,11 +93,19 @@ JUDGE_PROMPT = ChatPromptTemplate.from_messages([
 def judge_traits(llm, masker, question: str, answer: str, traits: list[str]) -> list[dict]:
     """글자 그대로는 확인되지 않는 기대 항목을 모델이 판정한다. 프로젝트명과 팀명은 가려서 보낸다."""
     chain = JUDGE_PROMPT | llm.with_structured_output(Judgement)
-    result = chain.invoke({
+    inputs = {
         "question": masker.mask(question),
         "answer": masker.mask(answer),
         "traits": "\n".join(f"- {masker.mask(t)}" for t in traits),
-    })
+    }
+    result = None
+    for _ in range(2):  # 모델이 정해진 형식으로 답하지 않으면(빈 값) 한 번 더 묻는다
+        result = chain.invoke(inputs, config={"run_name": "vulnwatch-eval-judge"})
+        if result is not None:
+            break
+    if result is None:
+        # 채점을 못 한 것이지 답이 틀린 것은 아니므로 실패가 아니라 오류로 남긴다
+        raise RuntimeError("채점 모델이 판정 형식으로 답하지 않았습니다(2회)")
     verdicts = result.verdicts
     if len(verdicts) != len(traits):
         return [{"trait": t, "met": False, "reason": "채점 모델이 항목 수를 맞추지 못함"} for t in traits]
@@ -199,7 +208,8 @@ def write_report(results: list[dict], round_no: int) -> Path:
     guard_ok = all(r["status"] == "pass" for r in guard)
     unsafe = [r["id"] for r in results if r["category"] == "negative"
               and any(f.startswith("금지 문자열") for f in r["fails"])]
-    done = passed >= PASS_LINE and guard_ok and not unsafe
+    pass_line = math.ceil(len(results) * PASS_RATE)
+    done = passed >= pass_line and guard_ok and not unsafe
     lines = [
         f"# {round_no}차 평가 리포트",
         "",
@@ -211,9 +221,9 @@ def write_report(results: list[dict], round_no: int) -> Path:
         "## 요약",
         "",
         f"- 전체 통과: **{rate(results)}**",
-        f"- 완성 기준(25건 중 {PASS_LINE}건 이상, guardrail 전부 통과, 근거 없음 문항에서 '안전' 답변 0건): "
+        f"- 완성 기준({len(results)}건 중 {pass_line}건 이상(80%), guardrail 전부 통과, 근거 없음 문항에서 '안전' 답변 0건): "
         f"**{'충족' if done else '미충족'}**",
-        f"  - {PASS_LINE}건 이상 통과: {'예' if passed >= PASS_LINE else '아니오'} ({passed}건)",
+        f"  - {pass_line}건 이상 통과: {'예' if passed >= pass_line else '아니오'} ({passed}건)",
         f"  - guardrail 전부 통과: {'예' if guard_ok else '아니오'} ({rate(guard)})",
         f"  - 근거 없음 문항의 '안전' 답변: {len(unsafe)}건",
         "",
@@ -223,7 +233,7 @@ def write_report(results: list[dict], round_no: int) -> Path:
     for category in ("positive", "negative", "edge", "guardrail"):
         lines.append(f"| {category} | {rate([r for r in results if r['category'] == category])} |")
     lines += ["", "| 기능 | 통과 |", "|---|---|"]
-    kinds = {"register": "등록", "applicability": "해당 여부", "status": "현황", "no_answer": "근거 없음"}
+    kinds = {"register": "등록", "applicability": "해당 여부", "status": "현황", "explain": "설명·검색", "no_answer": "근거 없음"}
     for kind, name in kinds.items():
         lines.append(f"| {name} | {rate([r for r in results if r['kind'] == kind])} |")
     lines.append(f"| 거절 | {rate(guard)} |")

@@ -101,12 +101,9 @@ def load_ragas():
 
 def make_embeddings():
     """답변 관련도(answer_relevancy)에 쓰는 임베딩 모델. 쓸 수 없으면 None."""
-    from langchain_aws import BedrockEmbeddings
-
-    settings = get_settings()
-    model_id = os.environ.get("VULNWATCH_EMBED_MODEL_ID", "amazon.titan-embed-text-v2:0")
+    model_id = get_settings().embed_model_id
     try:
-        embeddings = BedrockEmbeddings(model_id=model_id, region_name=settings.region)
+        embeddings = agent.make_embedder()  # 문서 검색과 같은 임베딩 모델
         embeddings.embed_query("test")
         return embeddings, model_id
     except Exception as exc:
