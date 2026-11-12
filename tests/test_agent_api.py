@@ -149,8 +149,46 @@ def test_API_토큰에_따라_계정이_달라진다(client):
     assert res.json()["label"] == "guardrail"
 
 
+class FailingModel(BaseChatModel):
+    """Bedrock 호출 오류를 흉내 내는 가짜 모델."""
+
+    code: str
+
+    @property
+    def _llm_type(self) -> str:
+        return "failing"
+
+    def bind_tools(self, tools, **kwargs):
+        return self
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        from botocore.exceptions import ClientError, NoCredentialsError
+
+        if self.code == "NoCredentials":
+            raise NoCredentialsError()
+        raise ClientError({"Error": {"Code": self.code, "Message": "Too many tokens per day"}}, "Converse")
+
+
+@pytest.mark.parametrize("code, status, message", [
+    ("ThrottlingException", 429, "한도"),
+    ("ServiceQuotaExceededException", 429, "한도"),
+    ("AccessDeniedException", 503, "호출하지 못했습니다"),
+    ("NoCredentials", 503, "호출하지 못했습니다"),
+])
+def test_API_모델_호출_오류는_트레이스백_없이_이유를_알린다(client, code, status, message):
+    c, application = client
+    application.state.llm = FailingModel(code=code)
+    res = c.post("/query", json={"question": "Log4j 2.14.1에 해당하는 취약점이 뭐야?"})
+    assert res.status_code == status
+    assert message in res.json()["detail"] and "Traceback" not in res.text
+    assert res.headers["content-type"] == "application/json; charset=utf-8"
+
+
 def test_API_잘못된_요청은_거부한다(client):
     c, _ = client
     assert c.post("/query", json={"question": "현황"}, headers={"Authorization": "Bearer wrong"}).status_code == 401
     assert c.post("/query", json={}).status_code == 422
     assert c.post("/query", json={"question": ""}).status_code == 422
+    for res in (c.post("/query", json={"question": "현황"}, headers={"Authorization": "Bearer wrong"}),
+                c.post("/query", json={})):
+        assert res.headers["content-type"] == "application/json; charset=utf-8"  # 오류 응답도 인코딩을 밝힌다

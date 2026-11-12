@@ -75,6 +75,15 @@
 
 `answer`, `contexts`, `trace`는 과정의 표준 규약이고, 나머지 세 키는 채점용으로 더한 것입니다.
 
+답을 만들지 못하면 위 형식 대신 HTTP 오류 코드와 `{"detail": "이유"}`를 돌려줍니다.
+
+| 코드 | 경우 |
+|---|---|
+| 401 | 모르는 토큰 |
+| 422 | `question`이 없거나 비어 있음 |
+| 429 | 모델(Bedrock) 호출 한도 초과. 계정의 하루 토큰 한도에 걸리면 이 오류가 납니다 |
+| 503 | 그 밖의 모델 호출 실패(자격 증명, 연결 등) |
+
 ## 실행 방법
 
 Python 3.14, Windows 기준입니다. Docker는 쓰지 않습니다.
@@ -88,7 +97,7 @@ python -m venv .venv
 
 ```
 .venv\Scripts\python -m uvicorn app:app                    서버 실행 (http://127.0.0.1:8000)
-.venv\Scripts\python -m pytest tests -q                    자동 테스트 120건 (실제 LLM 호출 없음)
+.venv\Scripts\python -m pytest tests -q                    자동 테스트 124건 (실제 LLM 호출 없음)
 .venv\Scripts\python evaluation/run_eval.py --round 1      인-아웃 세트 25건 평가 (실제 Bedrock 호출)
 .venv\Scripts\python evaluation/run_ragas.py --round 1     RAGAS 지표 (설치 방법은 requirements.txt 아래쪽)
 .venv\Scripts\python -m src.scheduler --snapshot T2        검색 1회 실행 (알림 메일은 outbox/에 저장)
@@ -232,5 +241,5 @@ Windows에서 `curl -d "{...한글...}"`처럼 한글 질문을 명령줄에 직
 - `src/matching.py:35` — 해당 여부 판정(`is_affected`), `src/matching.py:99` — 알림 판정(`alert_reason`)
 - `src/auth.py:23` — 다른 팀 접근 차단(`can_access`)
 - `src/scheduler.py:22` — 검색 1회 실행(`run_once`), `src/scheduler.py:93` — 주기 검색(`Scheduler`, 재시작 없이 주기 변경), `src/notifier.py:70` — 알림 메일 저장
-- `app.py:89` — `POST /query`, `app.py:96` — 설정 조회와 검색 주기 변경 API
+- `app.py:121` — `POST /query`, `app.py:134` — 설정 조회와 검색 주기 변경 API
 - `evaluation/run_eval.py`, `evaluation/run_ragas.py` — 평가 스크립트

@@ -1,9 +1,14 @@
 """API 진입점 (FastAPI). POST /query와, UI가 쓰는 주기 검색 설정 API."""
 
+import logging
 from contextlib import asynccontextmanager
 
+from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import FastAPI, Header, HTTPException
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from pydantic import BaseModel, Field
 
 from src import agent, auth, scheduler, storage
@@ -36,6 +41,18 @@ class UTF8JSONResponse(JSONResponse):
 
 
 app = FastAPI(title="VulnWatch", lifespan=lifespan, default_response_class=UTF8JSONResponse)
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_error(request, exc: StarletteHTTPException):
+    """오류 응답에도 문자 인코딩을 밝힌다. (한글 오류 문구가 깨지지 않게)"""
+    return UTF8JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=exc.headers)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error(request, exc: RequestValidationError):
+    """요청 형식 오류(422)에도 문자 인코딩을 밝힌다."""
+    return UTF8JSONResponse({"detail": jsonable_encoder(exc.errors())}, status_code=422)
 
 
 class QueryRequest(BaseModel):
@@ -86,11 +103,32 @@ def _settings_status() -> dict:
             "last_run_at": None, "next_run_at": None}
 
 
+logger = logging.getLogger("vulnwatch")
+
+# 호출 한도 초과로 보는 Bedrock 오류 코드
+THROTTLE_CODES = {"ThrottlingException", "TooManyRequestsException", "ServiceQuotaExceededException"}
+
+
+def _model_error(exc: Exception) -> HTTPException:
+    """모델(Bedrock) 호출 오류를 사용자에게 보여 줄 HTTP 오류로 바꾼다. 트레이스백은 보내지 않는다."""
+    code = exc.response.get("Error", {}).get("Code", "") if isinstance(exc, ClientError) else type(exc).__name__
+    logger.warning("모델 호출 실패: %s (%s)", code, str(exc)[:200])
+    if code in THROTTLE_CODES:
+        return HTTPException(status_code=429, detail="모델 호출 한도를 넘었습니다. 잠시 뒤 다시 시도해 주세요.")
+    return HTTPException(status_code=503, detail="모델을 호출하지 못했습니다. 자격 증명과 연결 상태를 확인해 주세요.")
+
+
 @app.post("/query", response_model=QueryResponse)
 def query(body: QueryRequest, authorization: str | None = Header(default=None)):
-    """질문을 받아 답한다. Authorization 헤더가 없으면 기본 평가 계정(팀 A 팀원)으로 처리한다."""
+    """질문을 받아 답한다. Authorization 헤더가 없으면 기본 평가 계정(팀 A 팀원)으로 처리한다.
+
+    모델 호출이 실패하면 답 대신 오류로 알린다: 한도 초과는 429, 그 밖의 호출 실패는 503.
+    """
     account = _account(authorization)
-    return agent.answer_question(app.state.conn, account, body.question, llm=app.state.llm)
+    try:
+        return agent.answer_question(app.state.conn, account, body.question, llm=app.state.llm)
+    except (ClientError, BotoCoreError) as exc:
+        raise _model_error(exc) from None
 
 
 @app.get("/settings", response_model=SettingsResponse)
