@@ -92,13 +92,13 @@ class Masker:
         return text
 
 
-def make_llm():
+def make_llm(max_tokens: int = 2000):
     """Bedrock의 Claude 모델을 만든다. 자격 증명은 환경 변수(.env)에서 읽는다."""
     from langchain_aws import ChatBedrockConverse
 
     settings = get_settings()
     return ChatBedrockConverse(model=settings.model_id, region_name=settings.region,
-                               temperature=0, max_tokens=2000)
+                               temperature=0, max_tokens=max_tokens)
 
 
 def _message_text(message) -> str:

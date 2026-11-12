@@ -186,6 +186,27 @@ def test_ID가_있으면_그_문서가_맨_앞(vulns_t1):
     assert r.search("CVE-2022-3602 buffer overrun")[0]["doc_id"] == "CVE-2022-3602"
 
 
+def test_근거_문서에는_점수와_KEV와_영향_범위가_들어간다(vulns_t1):
+    r = VulnRetriever(vulns_t1)
+    text = r.get("CVE-2021-44228")["text"]
+    assert "별칭: GHSA-jfh8-c2jp-5v3q" in text
+    assert "점수: 10.0 (NVD) / CISA KEV: 등재" in text
+    assert "log4j 2.0.1 이상 2.3.1 미만" in text and "2.13.0 이상 2.15.0 미만" in text
+    assert "점수: 9.8 (CISA-ADP) / CISA KEV: 미등재" in r.get("CVE-2024-50379")["text"]
+    assert "점수: 점수 미정" in r.get("CVE-2025-24813")["text"]
+    assert "ubuntu 22.04, 23.04" in r.get("CVE-2023-4911")["text"]
+
+
+def test_근거_문서에_이번_판정이_덧붙는다(session_for):
+    s = session_for()
+    tools.check_vulnerabilities(s, product="Log4j 2.14.1")
+    assert all("판정: Apache Log4j 2.14.1은 영향 범위에 들어 해당함" in c["text"] for c in s.contexts)
+    s = session_for()
+    tools.check_vulnerabilities(s, product="Spring Framework 5.3.17", vuln_id="CVE-2022-22950")
+    assert "판정: Spring Framework 5.3.17은 영향 범위 밖이라 해당하지 않음" in s.contexts[0]["text"]
+    assert "판정:" not in s.retriever.get("CVE-2022-22950")["text"]  # 원본 문서는 바뀌지 않는다
+
+
 def test_키워드로_관련_문서를_찾는다(vulns_t1):
     r = VulnRetriever(vulns_t1)
     assert "CVE-2023-44487" in [d["doc_id"] for d in r.search("HTTP/2 request cancellation reset streams")]

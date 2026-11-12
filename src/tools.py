@@ -47,14 +47,18 @@ class Session:
             self._retriever = VulnRetriever(self.vulns)
         return self._retriever
 
-    def add_context(self, vuln_id: str) -> None:
-        """답의 근거로 쓴 취약점 문서를 중복 없이 기록한다."""
+    def add_context(self, vuln_id: str, note: str | None = None) -> None:
+        """답의 근거로 쓴 취약점 문서를 중복 없이 기록한다. note는 이 요청에서 내린 판정을 문서 끝에 덧붙인다."""
         if vuln_id not in self.cve_ids:
             self.cve_ids.append(vuln_id)
-        if all(c["doc_id"] != vuln_id for c in self.contexts):
+        doc = next((c for c in self.contexts if c["doc_id"] == vuln_id), None)
+        if doc is None:
             doc = self.retriever.get(vuln_id)
-            if doc:
-                self.contexts.append(doc)
+            if doc is None:
+                return
+            self.contexts.append(doc)
+        if note and note not in doc["text"]:
+            doc["text"] += f"\n판정: {note}"
 
 
 def _result(session: Session, status: str, message: str, **extra) -> dict:
@@ -276,7 +280,7 @@ def check_vulnerabilities(session: Session, project: str | None = None, product:
             matches.append(_compact(m, t["name"], t["project"]))
     matches.sort(key=_sort_key)
     for m in matches:
-        session.add_context(m["id"])
+        session.add_context(m["id"], f'{m["product"]} {m["version"]}은 영향 범위에 들어 해당함')
 
     if target_vuln and not matches:
         listed = {a["product"] for a in target_vuln["affects"]}
@@ -284,7 +288,8 @@ def check_vulnerabilities(session: Session, project: str | None = None, product:
         if not checked:
             return _result(session, "not_listed_product",
                            f"{target_vuln['id']}의 영향 제품 정보에 조회한 제품이 없어 해당 여부를 확인할 수 없습니다.")
-        session.add_context(target_vuln["id"])
+        for t in checked:
+            session.add_context(target_vuln["id"], f'{t["name"]} {t["version"]}은 영향 범위 밖이라 해당하지 않음')
         ranges = [a for a in target_vuln["affects"] if a["product"] in {t["product"] for t in checked}]
         return _result(session, "not_affected",
                        f"{target_vuln['id']}의 영향 버전 범위에 조회한 버전이 들어 있지 않습니다.",
@@ -323,7 +328,7 @@ def get_project_status(session: Session, project: str | None = None) -> dict:
                 vulns.append(_compact(m, names[item["product"]]))
         vulns.sort(key=_sort_key)
         for v in vulns:
-            session.add_context(v["id"])
+            session.add_context(v["id"], f'{v["product"]} {v["version"]}은 영향 범위에 들어 해당함')
             v.pop("summary")  # 현황에서는 요약문을 뺀다
         alerts = [{"vuln_id": a["vuln_id"], "reason": a["reason"], "sent_at": a["sent_at"]}
                   for a in storage.list_alerts(session.conn, proj["id"])]

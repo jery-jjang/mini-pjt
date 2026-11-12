@@ -117,7 +117,8 @@ def make_embeddings():
 def evaluate(samples: list[dict]) -> tuple[dict, list[dict], str]:
     """네 지표를 계산한다. (평균, 문항별 점수, 임베딩 모델 이름)을 돌려준다."""
     ragas, parts = load_ragas()
-    llm = parts["llm_wrapper"](agent.make_llm())
+    # 문항 하나의 판정 목록이 길어 기본 길이 제한(2000)에서는 출력이 잘린다
+    llm = parts["llm_wrapper"](agent.make_llm(max_tokens=8000))
     embeddings, embed_model = make_embeddings()
     names = [m for m in METRICS if m != "answer_relevancy" or embeddings is not None]
     metrics = [parts[m]() for m in names]

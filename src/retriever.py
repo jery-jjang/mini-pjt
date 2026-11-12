@@ -14,11 +14,35 @@ def _tokenize(text: str) -> list[str]:
     return re.findall(r"[a-z0-9]+|[가-힣]+", text.lower())
 
 
+def _range_text(rng: dict) -> str:
+    """영향 버전 범위를 글로 적는다."""
+    start = f'{rng["introduced"]} 이상'
+    if "fixed" in rng:
+        return f'{start} {rng["fixed"]} 미만'
+    if "last_affected" in rng:
+        return f'{start} {rng["last_affected"]} 이하'
+    return start
+
+
 def _doc_text(vuln: dict) -> str:
-    """검색 대상 문서 본문: ID, 별칭, 제품, 설명문."""
-    products = ", ".join(t["product"] for t in vuln["affects"])
-    aliases = " ".join(vuln["aliases"])
-    return f'{vuln["id"]} {aliases} [{products}] {vuln["description"]}'.replace("  ", " ")
+    """문서 본문: 취약점 레코드 전체(ID, 별칭, 점수와 출처, KEV 여부, 영향 제품과 버전, 설명문).
+
+    답에 쓰이는 점수·KEV·영향 범위가 근거 문서에도 들어 있어야 답과 근거를 대조할 수 있다.
+    """
+    score, source = matching.effective_score(vuln)
+    score_text = f"{score} ({source})" if score is not None else "점수 미정"
+    targets = []
+    for target in vuln["affects"]:
+        spec = ", ".join(target["versions"]) if "versions" in target else ", ".join(
+            _range_text(r) for r in target["ranges"])
+        targets.append(f'{target["product"]} {spec}')
+    title = vuln["id"] + (f' (별칭: {", ".join(vuln["aliases"])})' if vuln["aliases"] else "")
+    return "\n".join([
+        title,
+        f'점수: {score_text} / CISA KEV: {"등재" if vuln["kev"] else "미등재"}',
+        f'영향 제품과 버전: {"; ".join(targets)}',
+        f'설명: {vuln["description"]}',
+    ])
 
 
 class VulnRetriever:
