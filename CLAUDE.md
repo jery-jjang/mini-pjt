@@ -1,25 +1,35 @@
 # 프로젝트 규칙
 
 무엇을 왜 만드는지는 `SERVICE.md`에 있습니다. 이 문서는 어떻게 만드는지만 다룹니다.
-상세 인수 기준은 `.ouroboros/seed_bfee3756e9e9.yaml`에 있습니다(커밋되지 않는 로컬 파일). 그 파일과 경로, 파일 이름, 응답 형식이 다르면 이 문서가 우선합니다. 예: 명세의 `miniprj/eval_set.json`은 `evaluation/test_queries.json`, `miniprj/run_eval.py`는 `evaluation/run_eval.py`, `miniprj/tests/`는 `tests/`입니다.
+산출물 규약의 원문은 `reference/`의 "mini PJT" 자료(4. 산출물 규약)입니다. 폴더 구조, API 형식, 인-아웃 세트 스키마는 그 규약을 따릅니다.
+상세 인수 기준은 `.ouroboros/seed_bfee3756e9e9.yaml`에 있습니다(커밋되지 않는 로컬 파일). 그 파일과 경로, 파일 이름, 응답 형식이 다르면 이 문서가 우선합니다. 예: 명세의 `miniprj/eval_set.json`은 `evaluation/test_queries.csv`, `miniprj/run_eval.py`는 `evaluation/run_eval.py`, `miniprj/tests/`는 `tests/`입니다.
+
+## PoC 범위
+
+- 만든다: 등록, 해당 여부 조회, 현황 조회, 취약점 설명문 검색, 거절, 주기 검색과 알림(파일 저장).
+- 만들지 않는다: 오탐 교정(3차), 실시간 NVD/OSV 조회, 실제 메일 발송, 로그인 화면. 계정은 고정 토큰 3개(팀 A 팀원, 팀 B 팀원, 보안 담당자)로 대신한다.
 
 ## 기술 스택
 
 - Python 3.14.8, 로컬 venv. Docker는 쓰지 않는다. (의존성이 3.14에 설치되지 않으면 사용자에게 알리고 멈춘다)
 - LangChain 1.4.7, LangGraph 1.2.19, langchain-aws 1.9.1, FastAPI 0.162.0 (실습 환경과 같은 버전)
-- 모델은 Amazon Bedrock Claude Sonnet 4.5: `us.anthropic.claude-sonnet-4-5-20250929-v1:0`, 리전 `us-east-1`, `langchain-aws`의 `ChatBedrockConverse`
+- 모델은 Amazon Bedrock Claude Sonnet 4.5: `global.anthropic.claude-sonnet-4-5-20250929-v1:0`, 리전 `us-east-1`, `langchain-aws`의 `ChatBedrockConverse`
 - Agent 생성은 `langchain.agents`의 `create_agent`를 쓴다
 - API 서버는 FastAPI, 저장소는 SQLite, 테스트는 pytest
+- 문서 검색은 `rank-bm25` 키워드 검색을 쓴다(외부 호출 없음)
 - LangSmith 추적은 끈다. `.env`에 값이 있어도 앱 시작 시 코드에서 `LANGSMITH_TRACING=false`로 강제한다
+- 추적(트레이스)은 응답의 `trace`와 로컬 기록 파일 `var/traces.jsonl`로 남긴다
 
 ## 실행 방법
 
 ```
 python -m venv .venv                      가상환경 만들기 (처음 한 번)
-.venv\Scripts\python -m pip install -e .  의존성 설치
+.venv\Scripts\python -m pip install -r requirements.txt   의존성 설치
 .venv\Scripts\python -m uvicorn app:app   서버 실행
 .venv\Scripts\python -m pytest tests -q   배선 테스트 (실제 LLM 호출 없음)
-.venv\Scripts\python evaluation/run_eval.py   25건 평가 (실제 Bedrock 호출)
+.venv\Scripts\python evaluation/run_eval.py --round 1    25건 평가 (실제 Bedrock 호출)
+.venv\Scripts\python evaluation/run_ragas.py --round 1   RAGAS 지표 (run_eval 뒤에 실행. 설치 방법은 requirements.txt 아래쪽)
+.venv\Scripts\python -m src.scheduler --snapshot T2      검색 1회 실행 (시연용)
 ```
 
 ## 폴더 구조 (제출 규약. 바꾸지 않는다)
@@ -27,12 +37,13 @@ python -m venv .venv                      가상환경 만들기 (처음 한 번
 ```
 SERVICE.md            무엇을 왜 만드는가
 CLAUDE.md             이 문서
-README.md             주제, 설계, 핵심 의사결정 2가지
-pyproject.toml        의존성과 Python 버전
+README.md             산출물 규약의 README 틀을 따른다 (활용 패턴, 아키텍처, 실행 방법, 평가 결과, 통과율, 회고, 핵심 코드 위치)
+requirements.txt      의존성
 .gitignore            .venv/, var/, outbox/, .env, .claude, .ouroboros 제외
 app.py                POST /query 진입점 (FastAPI)
 src/agent.py          메인 에이전트 그래프
-src/tools.py          도메인 도구 (등록, 조회, 교정, 감시)
+src/tools.py          도메인 도구 (등록, 조회, 문서 검색, 감시)
+src/retriever.py      RAG 파이프라인 (취약점 설명문 검색)
 src/matching.py       취약점 해당 여부 판정과 알림 대상 판정 (일반 코드, LLM 호출 없음)
 src/notifier.py       알림 메일 작성과 저장, 발송 이력
 src/scheduler.py      주기 검색과 '지금 1회 실행'
@@ -41,13 +52,11 @@ src/auth.py           로그인, 토큰, 팀·역할 확인
 src/storage.py        SQLite 접근
 src/config.py         설정값 (환경 변수에서 읽고 기본값을 둔다)
 data/                 취약점 스냅샷(1차·2차 시점), 초기 시드 데이터
-evaluation/           test_queries.json, 채점 스크립트 run_eval.py, 평가 리포트
+evaluation/           test_queries.csv, 채점 스크립트 run_eval.py, RAGAS 스크립트 run_ragas.py, round1_report.md, round2_report.md
 tests/                pytest (가짜 모델 주입, 실제 LLM 호출 없음)
-var/                  실행 중 만들어지는 SQLite 파일 (커밋하지 않는다)
+var/                  실행 중 만들어지는 SQLite 파일과 traces.jsonl (커밋하지 않는다)
 outbox/               저장된 알림 메일 파일 (커밋하지 않는다)
 ```
-
-- RAG는 쓰지 않으므로 `src/retriever.py`는 만들지 않는다.
 
 ## 주고받는 형식 (제출 규약)
 
@@ -58,8 +67,8 @@ outbox/               저장된 알림 메일 파일 (커밋하지 않는다)
 | 키 | 내용 |
 |---|---|
 | `answer` | 사용자에게 보여 줄 답변 문장 |
-| `contexts` | 답의 근거로 쓴 취약점 레코드 목록(없으면 빈 목록) |
-| `trace` | 실행 단계 기록(도구 이름, 인자, 결과 요약을 호출 순서대로) |
+| `contexts` | 답의 근거로 쓴 취약점 레코드 목록. 각 항목은 `{"doc_id": "CVE-...", "text": "..."}` (없으면 빈 목록) |
+| `trace` | 실행 단계 기록. 각 항목은 `{"step": "도구 이름 등", "input": "...", "output": "..."}`, 호출 순서대로 |
 | `label` | `answer` / `no_answer` / `guardrail` 중 하나 |
 | `cve_ids` | 답에 포함된 CVE ID 목록(CVE가 없으면 원래 ID) |
 | `tools_called` | 호출한 도구 이름 목록(중복 없이, 채점용) |
@@ -67,20 +76,31 @@ outbox/               저장된 알림 메일 파일 (커밋하지 않는다)
 - 등록은 두 번의 요청으로 이뤄진다. 첫 요청에서 후보 1~3개를 제시하고 계정별 '대기 중인 후보'를 SQLite에 저장한다. 같은 계정의 다음 요청("1번으로 확정")이 그 후보를 확정한다. 요청 형식은 바꾸지 않는다.
 - 프로젝트와 프로젝트별 알림 수신 주소는 `data/`의 초기 시드에 넣어 둔다. 대화로 프로젝트를 새로 만드는 기능은 만들지 않는다.
 
-## 평가셋 형식
+## 인-아웃 세트 형식 (제출 규약)
 
-- 파일은 `evaluation/test_queries.json`, 25건.
-- 필수 칸: `id`, `question`, `type`. `id`는 중복 금지.
-- `type` 값과 건수: `register` 5, `applicability` 6, `status` 5, `no_answer` 4, `guardrail` 5.
-- `type`별 기대 라벨: `register`, `applicability`, `status`는 `answer`, `no_answer`는 `no_answer`, `guardrail`은 `guardrail`.
-- 선택 칸: `requester`(`team_a_member` / `team_b_member` / `security_admin`, 비어 있으면 `team_a_member`), `expected_label`, `expected_cve_ids`, `expected_tools`, `forbidden`.
+- 파일은 `evaluation/test_queries.csv`, 25건. 열은 아래 7개이며 더하거나 빼지 않는다.
+
+| 열 | 필수 | 내용 |
+|---|---|---|
+| `id` | 필수 | 1부터 시작하는 번호, 중복 금지 |
+| `category` | 필수 | `positive` / `negative` / `edge` / `guardrail` |
+| `input` | 필수 | 사용자 질의. `POST /query`의 `question`으로 보낸다 |
+| `expected_traits` | 필수 | 답변에 반드시 들어가야 할 항목. 세미콜론으로 구분 |
+| `forbidden` | 선택 | 답변에 나오면 안 되는 항목. 세미콜론으로 구분 |
+| `expected_tools` | 선택 | 호출되어야 할 도구 이름. 세미콜론으로 구분 |
+| `note` | 선택 | 의도 메모. `requester=...`, `label=...`, `kind=...` 같은 채점용 표시도 여기에 세미콜론으로 구분해 적는다 |
+
+- 건수: `positive` 10(등록 3, 해당 여부 4, 현황 3), `negative` 4(근거 없음), `edge` 6(등록 2, 해당 여부 2, 현황 2), `guardrail` 5. 합치면 등록 5, 해당 여부 6, 현황 5, 근거 없음 4, 거절 5이다.
+- 기대 라벨: `positive`는 `answer`, `negative`는 `no_answer`, `guardrail`은 `guardrail`. `edge`는 `note`의 `label=` 값을 따른다.
+- 요청자: `note`에 `requester=team_b_member` 또는 `requester=security_admin`이 있으면 그 계정의 토큰으로 보낸다. 없으면 `team_a_member`.
 - guardrail은 네 유형(다른 팀 데이터, 공격 방법, 지시 조작, 무관한 질문)을 각각 1건 이상 넣는다.
-- 채점: 라벨 일치, 기대 CVE ID 전부 포함(추가 허용), 필수 도구 호출 여부, `forbidden` 문자열이 답에 없을 것.
-- 평가 실행 전에 SQLite를 `data/`의 초기 시드로 되돌린다. 문항 하나가 예외를 던져도 멈추지 않고 그 문항만 `error`로 기록한다. 유형별 통과율과 전체 통과율을 출력한다.
+- 자동 채점: 라벨 일치, `expected_traits` 중 `CVE-` 또는 `GHSA-`로 시작하는 ID가 모두 답에 있을 것(추가 ID 허용), `expected_tools`를 불렀을 것, `forbidden` 문자열이 답에 없을 것.
+- ID가 아닌 `expected_traits`는 LLM 채점(LLM-as-Judge)으로 판정하고, 답변과 나란히 리포트에 남겨 사람이 확인한다.
+- 평가 실행 전에 SQLite를 `data/`의 초기 시드로 되돌린다. 문항 하나가 예외를 던져도 멈추지 않고 그 문항만 `error`로 기록한다. 분류별 통과율과 전체 통과율을 출력하고 `evaluation/roundN_report.md`로 저장한다.
 
 ## 작업 순서
 
-1. 평가셋(`evaluation/test_queries.json`)과 고정 데이터(`data/`)를 코드보다 먼저 쓴다.
+1. 인-아웃 세트(`evaluation/test_queries.csv`)와 고정 데이터(`data/`)를 코드보다 먼저 쓴다.
 2. 한 번에 한 가지 기능만 붙이고, 붙일 때마다 실행해서 결과를 보여 준다.
 3. 계획을 먼저 보여 주고 승인을 받은 뒤 파일을 고친다.
 
