@@ -14,6 +14,7 @@ from langchain.agents import create_agent
 
 from src import sources, storage
 from src.config import get_settings
+from src.retriever import make_expander
 from src.tools import Session, build_tools
 
 SYSTEM_PROMPT = """너는 사내 취약점 감시 서비스(VulnWatch)의 어시스턴트다. 한국어로 짧고 정확하게 답한다.
@@ -33,11 +34,17 @@ SYSTEM_PROMPT = """너는 사내 취약점 감시 서비스(VulnWatch)의 어시
 - 사용자가 "N번으로 확정"처럼 번호를 고르면 항상 confirm_registration을 부른다. 너는 이전 대화를 기억하지 못하지만,
   앞서 제시한 후보는 서버에 저장돼 있다. 후보가 있는지는 도구가 확인하므로 스스로 판단해 되묻지 않는다.
   사용자가 확정하기 전에는 등록됐다고 말하지 않는다.
-- 취약점의 내용을 설명해야 하면 search_vuln_docs로 설명문을 찾아 근거로 쓴다.
+- "어떤 취약점이야?", "설명해줘"처럼 취약점이 무엇인지, 원리나 영향을 묻는 질문과, ID 없이 증상·특징으로
+  취약점을 찾는 질문은 search_vuln_docs를 불러 설명문을 근거로 답한다. 기억으로 설명하지 않는다.
+- 프로젝트나 제품의 취약점을 설명해 달라는 질문은 check_vulnerabilities로 해당 여부를 먼저 확인한 뒤,
+  해당하는 취약점에 대해 search_vuln_docs로 설명문을 찾는다. 검색 결과에 해당하지 않는 취약점이 섞여 있어도
+  그 취약점은 답에 적지 않는다.
+- check_vulnerabilities 결과의 summary는 설명문 앞부분만 자른 것이다. 설명을 요청받았으면 summary로
+  답을 끝내지 말고 반드시 search_vuln_docs를 불러 전체 설명문을 근거로 답한다.
 - 사용자가 지금 검색(스캔)을 실행해 달라고 하면 run_scan_now를 부르고, 저장된 알림 메일 수와 대상 취약점을 알려 준다.
 
 [답변 규칙]
-- 도구 결과의 status가 unknown_vuln, unknown_product, unmonitored_item, not_listed_product이면
+- 도구 결과의 status가 unknown_vuln, unknown_product, unmonitored_item, not_listed_product, no_docs이면
   "확인할 수 없음"이라고 답한다. 이때 "안전합니다", "해당 없음", "문제없습니다" 같은 말은 절대 쓰지 않는다.
 - status가 not_affected이면 그 버전은 해당하지 않는다고 답하고, 영향 버전 범위를 근거로 든다.
 - status가 none_found이면 보유 데이터 범위에서 해당 건이 없다고만 말한다. 안전하다고 하지 않는다.
@@ -102,6 +109,14 @@ def make_llm(max_tokens: int = 2000):
                                temperature=0, max_tokens=max_tokens)
 
 
+def make_embedder():
+    """문서 검색에 쓰는 Bedrock 임베딩 모델을 만든다(기본 Titan Text Embeddings v2)."""
+    from langchain_aws import BedrockEmbeddings
+
+    settings = get_settings()
+    return BedrockEmbeddings(model_id=settings.embed_model_id, region_name=settings.region)
+
+
 def _message_text(message) -> str:
     """모델 메시지에서 글자만 꺼낸다."""
     content = message.content
@@ -120,13 +135,21 @@ def decide_label(session: Session) -> str:
     return "answer"
 
 
-def answer_question(conn, account: dict, question: str, llm=None) -> dict:
-    """질문 하나를 처리해 응답 여섯 키를 돌려준다. llm에 가짜 모델을 넣을 수 있다."""
+def answer_question(conn, account: dict, question: str, llm=None, embedder=None, expander=None) -> dict:
+    """질문 하나를 처리해 응답 여섯 키를 돌려준다.
+
+    llm을 주지 않으면 실제 Bedrock 모델과 함께 문서 검색용 쿼리 확장·임베딩도 만든다.
+    llm을 주면(테스트) embedder와 expander는 준 것만 쓴다. 없으면 문서 검색은 키워드 검색만 한다.
+    """
     if llm is None:
         llm = make_llm()
+        expander = expander or make_expander(llm)
+        embedder = embedder or make_embedder()
+    settings = get_settings()
     masker = Masker(conn)
     session = Session(conn=conn, account=account, vulns=sources.load_snapshot(), llm=llm,
-                      mask=masker.mask, unmask=masker.unmask)
+                      mask=masker.mask, unmask=masker.unmask, expander=expander, embedder=embedder,
+                      embed_cache_path=settings.db_path.parent / "doc_embeddings.json")
     masked = masker.mask(question)
     session.trace.append({"step": "mask_question", "input": question, "output": masked})
 

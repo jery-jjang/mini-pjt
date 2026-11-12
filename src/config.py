@@ -56,6 +56,7 @@ class Settings:
     model_id: str
     region: str
     langsmith_tracing: bool  # LangSmith 추적 여부 (.env의 LANGSMITH_TRACING)
+    embed_model_id: str  # 문서 검색(의미 검색)과 RAGAS에 쓰는 임베딩 모델
 
 
 def _interval_from_env() -> float:
@@ -85,4 +86,5 @@ def get_settings() -> Settings:
         model_id=os.environ.get("VULNWATCH_MODEL_ID", "global.anthropic.claude-sonnet-4-5-20250929-v1:0"),
         region=os.environ.get("VULNWATCH_REGION", "us-east-1"),
         langsmith_tracing=_flag("LANGSMITH_TRACING", False),
+        embed_model_id=os.environ.get("VULNWATCH_EMBED_MODEL_ID", "amazon.titan-embed-text-v2:0"),
     )

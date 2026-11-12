@@ -14,10 +14,10 @@ from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
 from src import auth, matching, storage
-from src.retriever import VulnRetriever
+from src.retriever import ID_PATTERN, VulnRetriever
 
 # 근거 데이터가 없어서 '확인할 수 없음'으로 답해야 하는 결과 상태
-NO_DATA_STATUSES = {"unknown_vuln", "unknown_product", "unmonitored_item", "not_listed_product"}
+NO_DATA_STATUSES = {"unknown_vuln", "unknown_product", "unmonitored_item", "not_listed_product", "no_docs"}
 SUMMARY_LENGTH = 300
 
 
@@ -39,13 +39,17 @@ class Session:
     denied: bool = False
     no_data: bool = False
     run_id: str | None = None  # 이 요청의 실행 ID (LangSmith 기록과 로컬 기록을 잇는다)
+    expander: object = None  # 문서 검색의 쿼리 확장 함수 (없으면 확장하지 않음)
+    embedder: object = None  # 문서 검색의 임베딩 모델 (없으면 키워드 검색만)
+    embed_cache_path: object = None  # 문서 임베딩 파일 캐시 경로
     _retriever: VulnRetriever | None = None
 
     @property
     def retriever(self) -> VulnRetriever:
         """문서 검색기는 처음 쓸 때 한 번 만든다."""
         if self._retriever is None:
-            self._retriever = VulnRetriever(self.vulns)
+            self._retriever = VulnRetriever(self.vulns, expander=self.expander, embedder=self.embedder,
+                                            cache_path=self.embed_cache_path)
         return self._retriever
 
     def add_context(self, vuln_id: str, note: str | None = None) -> None:
@@ -341,14 +345,25 @@ def get_project_status(session: Session, project: str | None = None) -> dict:
 # ---------------- 문서 검색 ----------------
 
 def search_vuln_docs(session: Session, query: str, k: int = 3) -> dict:
-    """취약점 설명문에서 질문과 관련 있는 문서를 찾는다."""
+    """취약점 설명문에서 질문과 관련 있는 문서를 찾는다(ID 일치 + 쿼리 확장 + 키워드·의미 하이브리드).
+
+    검색어에 든 취약점 ID가 하나도 데이터에 없으면, 비슷한 문서를 내놓지 않고 '확인할 수 없음'으로 처리한다.
+    """
+    asked = ID_PATTERN.findall(query)
+    unknown = [i for i in asked if matching.resolve_id(session.vulns, i) is None]
+    if asked and len(unknown) == len(asked):
+        return _result(session, "unknown_vuln",
+                       f"{', '.join(unknown)}는 보유한 취약점 데이터에 없어 확인할 수 없습니다.")
     docs = session.retriever.search(query, k)
+    search_info = session.retriever.last_search
     if not docs:
-        return _result(session, "no_docs", "관련 있는 취약점 설명문을 찾지 못했습니다.", docs=[])
+        return _result(session, "no_docs", "보유한 취약점 설명문에서 관련 문서를 찾지 못해 확인할 수 없습니다.",
+                       docs=[], search=search_info)
     for doc in docs:
         session.add_context(doc["doc_id"])
         session.searched.add(doc["doc_id"])
-    return _result(session, "ok", f"관련 문서 {len(docs)}건.", docs=docs)
+    # 검색 과정(search)을 문서 목록보다 앞에 둔다. 실행 기록은 길면 뒤가 잘리기 때문이다.
+    return _result(session, "ok", f"관련 문서 {len(docs)}건.", search=search_info, docs=docs)
 
 
 # ---------------- 감시 ----------------
@@ -446,7 +461,9 @@ def build_tools(session: Session) -> list:
     def search_tool(query: str) -> str:
         """취약점 설명문을 검색해 답의 근거로 쓸 문서를 찾는다.
 
-        query: 검색어. 설명문이 영어이므로 CVE·GHSA ID나 영어 키워드가 잘 맞는다.
+        취약점이 무엇인지, 원리·영향이 어떤지 설명해야 할 때와, ID 없이 증상이나 특징으로 취약점을 찾을 때 부른다.
+        query: 검색어. 사용자 질문의 핵심을 그대로 넘긴다(한글도 된다. 영어 키워드로 넓혀 검색한다).
+        CVE·GHSA ID가 있으면 함께 넣는다.
         """
         args = {"query": query}
         return _record(session, "search_vuln_docs", args, search_vuln_docs(session, **args))
