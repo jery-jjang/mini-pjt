@@ -9,11 +9,14 @@
 
 import argparse
 import threading
+import time
+from datetime import datetime
 
 from src import matching, notifier, sources, storage
-from src.config import get_settings
+from src.config import get_settings, validate_interval
 
 FAILURES_KEY = "consecutive_failures"
+INTERVAL_KEY = "scan_interval_hours"
 
 
 def run_once(conn, llm=None, snapshot: str | None = None, loader=None) -> dict:
@@ -62,23 +65,104 @@ def _on_failure(conn, settings, error: str) -> dict:
     return report
 
 
-def start(interval_hours: float | None = None) -> threading.Event:
-    """주기 검색을 백그라운드에서 시작한다. 돌려준 Event를 set()하면 멈춘다."""
-    settings = get_settings()
-    seconds = (interval_hours or settings.scan_interval_hours) * 3600
-    stop = threading.Event()
+# ---------------- 검색 주기 ----------------
 
-    def loop():
-        conn = storage.connect(settings.db_path)  # 요청 처리와 겹치지 않게 연결을 따로 쓴다
-        while not stop.wait(seconds):
-            try:
-                run_once(conn)
-            except Exception:  # 한 번의 오류로 주기 검색이 멈추지 않게 한다
-                pass
+def load_interval(conn) -> float:
+    """저장된 검색 주기(시간). 저장된 값이 없거나 잘못됐으면 설정값(.env, 기본 6시간)을 쓴다."""
+    stored = storage.get_meta(conn, INTERVAL_KEY)
+    if stored is not None:
+        try:
+            return validate_interval(stored)
+        except ValueError:
+            pass
+    return get_settings().scan_interval_hours
+
+
+def save_interval(conn, hours) -> float:
+    """검색 주기를 검사해 저장한다. 서버를 다시 띄워도 이 값을 쓴다. 0 이하면 ValueError."""
+    value = validate_interval(hours)
+    storage.set_meta(conn, INTERVAL_KEY, value)
+    return value
+
+
+def _iso(timestamp: float | None) -> str | None:
+    """초 단위 시각을 사람이 읽는 형식으로 바꾼다."""
+    return datetime.fromtimestamp(timestamp).isoformat(timespec="seconds") if timestamp else None
+
+
+class Scheduler:
+    """주기 검색을 백그라운드에서 돌린다. 도는 중에도 주기를 바꿀 수 있다.
+
+    주기를 바꾸면 바꾼 시각 + 새 주기에 다음 검색을 한다. 기다리던 중이면 바로 깨어나 다시 계산한다.
+    clock과 runner는 테스트에서 시간과 검색 동작을 바꿔 끼우기 위한 것이다.
+    """
+
+    def __init__(self, interval_hours: float, db_path=None, clock=time.time, runner=None):
+        self._interval = validate_interval(interval_hours)
+        self._db_path = db_path or get_settings().db_path
+        self._clock = clock
+        self._runner = runner or run_once
+        self._lock = threading.Lock()
+        self._wake = threading.Event()
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self.last_run_at: float | None = None
+        self.next_run_at = clock() + self._interval * 3600  # 첫 검색은 한 주기가 지난 뒤
+
+    @property
+    def interval_hours(self) -> float:
+        return self._interval
+
+    def set_interval(self, hours) -> float:
+        """주기를 바꾼다. 다음 검색은 지금부터 새 주기 뒤. 0 이하면 ValueError를 내고 아무것도 바꾸지 않는다."""
+        value = validate_interval(hours)
+        with self._lock:
+            self._interval = value
+            self.next_run_at = self._clock() + value * 3600
+        self._wake.set()  # 기다리던 스레드를 깨워 새 시각으로 다시 기다리게 한다
+        return value
+
+    def status(self) -> dict:
+        """현재 주기와 실행 시각."""
+        with self._lock:
+            return {"scan_interval_hours": self._interval, "scheduler_enabled": True,
+                    "last_run_at": _iso(self.last_run_at), "next_run_at": _iso(self.next_run_at)}
+
+    def tick(self, conn) -> bool:
+        """다음 검색 시각이 지났으면 한 번 검색한다. 검색했으면 True."""
+        with self._lock:
+            if self._clock() < self.next_run_at:
+                return False
+        try:
+            self._runner(conn)
+        except Exception:  # 한 번의 오류로 주기 검색이 멈추지 않게 한다
+            pass
+        with self._lock:
+            self.last_run_at = self._clock()
+            self.next_run_at = self.last_run_at + self._interval * 3600
+        return True
+
+    def start(self) -> "Scheduler":
+        """백그라운드 스레드를 시작한다."""
+        self._thread = threading.Thread(target=self._loop, name="vulnwatch-scheduler", daemon=True)
+        self._thread.start()
+        return self
+
+    def stop(self) -> None:
+        """스레드를 멈춘다."""
+        self._stop.set()
+        self._wake.set()
+
+    def _loop(self) -> None:
+        conn = storage.connect(self._db_path)  # 요청 처리와 겹치지 않게 연결을 따로 쓴다
+        while not self._stop.is_set():
+            if self.tick(conn):
+                continue
+            with self._lock:
+                delay = max(0.0, self.next_run_at - self._clock())
+            self._wake.wait(delay)  # 다음 검색 시각까지, 또는 주기가 바뀔 때까지 기다린다
+            self._wake.clear()
         conn.close()
-
-    threading.Thread(target=loop, name="vulnwatch-scheduler", daemon=True).start()
-    return stop
 
 
 if __name__ == "__main__":

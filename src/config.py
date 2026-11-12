@@ -16,6 +16,19 @@ os.environ["LANGSMITH_TRACING"] = "false"
 os.environ["LANGCHAIN_TRACING_V2"] = "false"
 
 
+def validate_interval(hours) -> float:
+    """검색 주기(시간)를 검사해 숫자로 돌려준다. 0 이하이거나 숫자가 아니면 ValueError."""
+    try:
+        value = float(hours)
+    except (TypeError, ValueError):
+        raise ValueError(f"검색 주기는 숫자여야 합니다: {hours!r}") from None
+    if value != value or value in (float("inf"), float("-inf")):
+        raise ValueError(f"검색 주기는 유한한 숫자여야 합니다: {hours!r}")
+    if value <= 0:
+        raise ValueError(f"검색 주기는 0보다 커야 합니다: {hours!r}")
+    return value
+
+
 def _flag(name: str, default: bool) -> bool:
     """환경 변수를 참/거짓으로 읽는다."""
     value = os.environ.get(name)
@@ -43,6 +56,15 @@ class Settings:
     region: str
 
 
+def _interval_from_env() -> float:
+    """VULNWATCH_SCAN_INTERVAL_HOURS를 읽는다. 잘못된 값이면 어느 설정이 틀렸는지 밝혀 멈춘다."""
+    raw = os.environ.get("VULNWATCH_SCAN_INTERVAL_HOURS", "6")
+    try:
+        return validate_interval(raw)
+    except ValueError as exc:
+        raise ValueError(f"VULNWATCH_SCAN_INTERVAL_HOURS 설정이 잘못됐습니다. {exc}") from None
+
+
 def get_settings() -> Settings:
     """현재 환경 변수 기준의 설정값을 돌려준다."""
     var_dir = Path(os.environ.get("VULNWATCH_VAR_DIR", ROOT / "var"))
@@ -52,7 +74,7 @@ def get_settings() -> Settings:
         outbox_dir=Path(os.environ.get("VULNWATCH_OUTBOX_DIR", ROOT / "outbox")),
         trace_path=Path(os.environ.get("VULNWATCH_TRACE_PATH", var_dir / "traces.jsonl")),
         snapshot=os.environ.get("VULNWATCH_SNAPSHOT", "T1").upper(),
-        scan_interval_hours=float(os.environ.get("VULNWATCH_SCAN_INTERVAL_HOURS", "6")),
+        scan_interval_hours=_interval_from_env(),
         scheduler_enabled=_flag("VULNWATCH_SCHEDULER_ENABLED", True),
         failure_notice_threshold=int(os.environ.get("VULNWATCH_FAILURE_NOTICE_THRESHOLD", "2")),
         alert_cvss_threshold=float(os.environ.get("VULNWATCH_ALERT_CVSS_THRESHOLD", "9.0")),
