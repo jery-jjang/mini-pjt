@@ -17,7 +17,7 @@
 | 3 | RAG | Day 2 | 취약점 레코드 20건(점수, KEV 여부, 영향 버전 범위, 설명문)을 BM25로 검색해 답의 근거로 쓰고 응답의 `contexts`에 싣는다. 질문에 CVE·GHSA ID가 있으면 그 문서를 먼저 준다(`src/retriever.py`) |
 | 4 | 도구 다중 | Day 4 | SQLite(등록·현황), 버전 판정 코드, 문서 검색, 검색 실행을 각각 도구로 만들었다(`src/tools.py`) |
 | 6 | 가드레일 | Day 5 | 다른 팀 데이터 차단과 '근거 없음' 판정은 코드가 한다. 공격 방법·지시 조작·무관한 질문은 모델이 거절 도구를 불러 기록한다. 모델에 보내는 글에서는 프로젝트명과 팀명을 가린다 |
-| 11 | Observability · Trace | Day 7 | 응답의 `trace`와 로컬 파일 `var/traces.jsonl`에 단계별 입력과 출력을 남긴다 |
+| 11 | Observability · Trace | Day 7 | LangSmith에 요청마다 `vulnwatch-query` 실행으로 모델 호출과 도구 호출을 남긴다(알림 요약은 `vulnwatch-alert-summary`). 같은 `run_id`로 응답의 `trace`와 로컬 파일 `var/traces.jsonl`에도 남겨 둘을 잇는다. 모델에 보내기 전에 프로젝트명·팀명을 가리므로 LangSmith에도 가린 글만 남는다(`src/agent.py`) |
 | 12 | 평가 (RAGAS · LLM-as-Judge) | Day 7 | 인-아웃 세트 25건을 코드 채점(해당 여부 문항은 ID 정확 일치)과 LLM 채점으로 평가하고(`evaluation/run_eval.py`), RAGAS 네 지표를 낸다(`evaluation/run_ragas.py`) |
 
 쓰지 않은 패턴과 이유:
@@ -25,7 +25,8 @@
 - **5 MCP, 9 Multi-Agent, 10 Plan-Execute·장기 메모리**: 질문 하나에 도구 한두 개로 끝나는 작업이라 필요하지 않았습니다.
 - **7 HITL**: LangGraph의 `interrupt()`는 쓰지 않았습니다. 대신 등록은 "후보 제시 → 사람이 번호로 확정"의 두 번 요청으로 나눠, 사람이 확정하기 전에는 반영되지 않게 했습니다.
 - **8 미들웨어**: 이름 가리기를 `AgentMiddleware`가 아니라 직접 만든 코드(`Masker`)로 처리했습니다.
-- **11의 LangSmith**: 대화 내용이 외부로 나가지 않게 하려고 일부러 껐습니다(`.env`에 값이 있어도 코드에서 끕니다). 추적은 로컬 기록으로 대신합니다.
+
+LangSmith 추적은 `.env`의 `LANGSMITH_TRACING=true`, `LANGSMITH_API_KEY`, `LANGSMITH_PROJECT`로 켭니다. 실제 질문 하나의 LangSmith 기록을 읽어, 프로젝트명·팀명·수신 주소·토큰이 0번 나오고 `[프로젝트2]`, `[팀1]` 같은 가린 표시만 남는 것을 확인했습니다. 자동 테스트는 추적을 끄고 돌아 외부로 아무것도 보내지 않습니다.
 
 ## 아키텍처
 
@@ -104,7 +105,7 @@ VULNWATCH_REGION=us-east-1
 
 ```
 .venv\Scripts\python -m uvicorn app:app                    서버 실행 (http://127.0.0.1:8000)
-.venv\Scripts\python -m pytest tests -q                    자동 테스트 124건 (실제 LLM 호출 없음)
+.venv\Scripts\python -m pytest tests -q                    자동 테스트 125건 (실제 LLM 호출 없음)
 .venv\Scripts\python evaluation/run_eval.py --round 1      인-아웃 세트 25건 평가 (실제 Bedrock 호출)
 .venv\Scripts\python evaluation/run_ragas.py --round 1     RAGAS 지표 (설치 방법은 requirements.txt 아래쪽)
 .venv\Scripts\python -m src.scheduler --snapshot T2        검색 1회 실행 (알림 메일은 outbox/에 저장)
@@ -240,10 +241,10 @@ Windows에서 `curl -d "{...한글...}"`처럼 한글 질문을 명령줄에 직
 
 ## 핵심 코드 위치
 
-- `src/agent.py:122` — 메인 에이전트(`answer_question`): 이름 가리기, `create_agent`, 라벨 결정
-- `src/agent.py:18` — 시스템 프롬프트
-- `src/tools.py:400` — 에이전트용 도구 7개(`build_tools`)
-- `src/tools.py:231` — 해당 여부 조회 도구(`check_vulnerabilities`)
+- `src/agent.py:123` — 메인 에이전트(`answer_question`): 이름 가리기, `create_agent`, LangSmith 추적, 라벨 결정
+- `src/agent.py:19` — 시스템 프롬프트
+- `src/tools.py:401` — 에이전트용 도구 7개(`build_tools`)
+- `src/tools.py:232` — 해당 여부 조회 도구(`check_vulnerabilities`)
 - `src/retriever.py:48` — RAG 파이프라인(`VulnRetriever`)
 - `src/matching.py:35` — 해당 여부 판정(`is_affected`), `src/matching.py:99` — 알림 판정(`alert_reason`)
 - `src/auth.py:23` — 다른 팀 접근 차단(`can_access`)

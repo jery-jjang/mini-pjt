@@ -17,8 +17,9 @@
 - Agent 생성은 `langchain.agents`의 `create_agent`를 쓴다
 - API 서버는 FastAPI, 저장소는 SQLite, 테스트는 pytest
 - 문서 검색은 `rank-bm25` 키워드 검색을 쓴다(외부 호출 없음)
-- LangSmith 추적은 끈다. `.env`에 값이 있어도 앱 시작 시 코드에서 `LANGSMITH_TRACING=false`로 강제한다
-- 추적(트레이스)은 응답의 `trace`와 로컬 기록 파일 `var/traces.jsonl`로 남긴다
+- 추적(트레이스)은 LangSmith와 로컬 기록 두 곳에 남긴다. LangSmith는 `.env`의 `LANGSMITH_TRACING=true`일 때 켜지고, 요청마다 `vulnwatch-query` 실행으로 남는다. 같은 `run_id`를 응답의 `trace`가 담긴 로컬 기록 `var/traces.jsonl`에도 적어 둘을 잇는다
+- LangSmith로 가는 것은 모델 입력과 출력, 도구 입력과 출력뿐이고 모두 프로젝트명·팀명을 가린 글이다. 메타데이터에는 역할만 넣고 계정·팀·프로젝트 이름을 넣지 않는다
+- `tests/`는 `conftest.py`에서 `LANGSMITH_TRACING=false`로 고정해 외부로 아무것도 보내지 않는다
 
 ## 실행 방법
 
