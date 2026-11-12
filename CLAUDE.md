@@ -13,7 +13,7 @@
 
 - Python 3.14.8, 로컬 venv. Docker는 쓰지 않는다. (의존성이 3.14에 설치되지 않으면 사용자에게 알리고 멈춘다)
 - LangChain 1.4.7, LangGraph 1.2.19, langchain-aws 1.9.1, FastAPI 0.162.0 (실습 환경과 같은 버전)
-- 모델은 Amazon Bedrock Claude Sonnet 4.5: `global.anthropic.claude-sonnet-4-5-20250929-v1:0`, 리전 `us-east-1`, `langchain-aws`의 `ChatBedrockConverse`
+- 모델은 Amazon Bedrock, `langchain-aws`의 `ChatBedrockConverse`. 모델 ID와 리전은 `.env`의 `VULNWATCH_MODEL_ID`, `VULNWATCH_REGION`으로 정한다. 지금 `.env`는 Amazon Nova Pro(`us.amazon.nova-pro-v1:0`, `us-east-1`)이고, `.env`에 없을 때 코드 기본값은 Claude Sonnet 4.5(`global.anthropic.claude-sonnet-4-5-20250929-v1:0`)다. 1차·2차 평가와 RAGAS 결과는 Sonnet 4.5로 낸 것이다
 - Agent 생성은 `langchain.agents`의 `create_agent`를 쓴다
 - API 서버는 FastAPI, 저장소는 SQLite, 테스트는 pytest
 - 문서 검색은 `rank-bm25` 키워드 검색을 쓴다(외부 호출 없음)

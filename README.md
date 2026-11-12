@@ -93,7 +93,14 @@ python -m venv .venv
 .venv\Scripts\python -m pip install -r requirements.txt
 ```
 
-`.env` 파일에 Bedrock 자격 증명을 넣습니다(`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION`). 모델은 `global.anthropic.claude-sonnet-4-5-20250929-v1:0`, 리전은 `us-east-1`이며 `VULNWATCH_MODEL_ID`, `VULNWATCH_REGION`으로 바꿀 수 있습니다.
+`.env` 파일에 Bedrock 자격 증명(`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION`)과 쓸 모델을 넣습니다.
+
+```
+VULNWATCH_MODEL_ID=us.amazon.nova-pro-v1:0
+VULNWATCH_REGION=us-east-1
+```
+
+모델 ID를 적지 않으면 Claude Sonnet 4.5(`global.anthropic.claude-sonnet-4-5-20250929-v1:0`)를 씁니다. 아래 평가 결과(1차·2차 통과율, RAGAS)는 Sonnet 4.5로 낸 것입니다. 모델을 바꾸면 도구 선택이 달라져 결과가 달라질 수 있습니다.
 
 ```
 .venv\Scripts\python -m uvicorn app:app                    서버 실행 (http://127.0.0.1:8000)
