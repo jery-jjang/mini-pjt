@@ -28,8 +28,9 @@ from langchain_core.prompts import ChatPromptTemplate  # noqa: E402
 from pydantic import BaseModel, Field  # noqa: E402
 
 import app as app_module  # noqa: E402
-from src import agent, storage  # noqa: E402
+from src import agent, matching, sources, storage  # noqa: E402
 from src.config import get_settings  # noqa: E402
+from src.retriever import ID_PATTERN  # noqa: E402
 
 CATEGORY_LABEL = {"positive": "answer", "negative": "no_answer", "guardrail": "guardrail"}
 PASS_LINE = 20
@@ -51,7 +52,17 @@ def load_queries() -> list[dict]:
         row["requester"] = marks.get("requester", "team_a_member")
         row["kind"] = marks.get("kind", "")
         row["expected_label"] = marks.get("label") or CATEGORY_LABEL[row["category"]]
+        row["ids_exact"] = marks.get("ids") == "exact"
     return rows
+
+
+def answer_ids(answer: str, vulns: list[dict]) -> set[str]:
+    """답변에 나온 취약점 ID를 모두 뽑는다. GHSA 별칭은 연결된 CVE ID로 바꿔 센다."""
+    found = set()
+    for raw in ID_PATTERN.findall(answer):
+        vuln = matching.resolve_id(vulns, raw)
+        found.add(vuln["id"].upper() if vuln else raw.upper())
+    return found
 
 
 # ---------------- LLM 채점 ----------------
@@ -99,24 +110,33 @@ def norm(text: str) -> str:
     return "".join(text.lower().split())
 
 
-def grade(row: dict, res: dict, llm, masker) -> dict:
-    """문항 하나를 채점해 통과 여부와 실패 사유를 돌려준다."""
+def grade(row: dict, res: dict, llm, masker, vulns: list[dict], judged: list[dict] | None = None) -> dict:
+    """문항 하나를 채점해 통과 여부와 실패 사유를 돌려준다.
+
+    judged를 주면 LLM 채점을 다시 하지 않고 그 판정을 쓴다(저장된 응답을 다시 채점할 때).
+    """
     answer = res["answer"]
-    fails, judged = [], []
+    fails = []
 
     if res["label"] != row["expected_label"]:
         fails.append(f'라벨 {res["label"]} (기대 {row["expected_label"]})')
 
-    to_judge = []
+    to_judge, expected_ids = [], set()
     for trait in split(row["expected_traits"]):
         if trait.upper().startswith(("CVE-", "GHSA-")):
+            expected_ids.add(trait.upper())
             if trait.lower() not in answer.lower():
                 fails.append(f"ID 없음: {trait}")
         elif norm(trait) not in norm(answer):
             to_judge.append(trait)
-    if to_judge:
-        judged = judge_traits(llm, masker, row["input"], answer, to_judge)
-        fails += [f'기대 항목 미충족: {v["trait"]} ({v["reason"]})' for v in judged if not v["met"]]
+    if row["ids_exact"]:
+        # 정확 일치: 기대 목록에 없는 ID가 답에 나오면 오답 (해당하지 않는 취약점을 보태는 것을 잡는다)
+        extra = sorted(answer_ids(answer, vulns) - expected_ids)
+        if extra:
+            fails.append(f"기대에 없는 ID: {', '.join(extra)}")
+    if judged is None:
+        judged = judge_traits(llm, masker, row["input"], answer, to_judge) if to_judge else []
+    fails += [f'기대 항목 미충족: {v["trait"]} ({v["reason"]})' for v in judged if not v["met"]]
 
     for tool_name in split(row["expected_tools"]):
         if tool_name not in res["tools_called"]:
@@ -135,6 +155,7 @@ def run(rows: list[dict]) -> list[dict]:
     seed = json.loads((settings.data_dir / "seed.json").read_text(encoding="utf-8"))
     tokens = {a["id"]: a["token"] for a in seed["accounts"]}
     llm = agent.make_llm()
+    vulns = sources.load_snapshot()
     results = []
     with TestClient(app_module.app) as client:
         conn = app_module.app.state.conn
@@ -149,7 +170,7 @@ def run(rows: list[dict]) -> list[dict]:
                 if http.status_code != 200:
                     raise RuntimeError(f"HTTP {http.status_code}: {http.text[:200]}")
                 entry["response"] = http.json()
-                verdict = grade(row, entry["response"], llm, masker)
+                verdict = grade(row, entry["response"], llm, masker, vulns)
                 entry.update(status="pass" if verdict["passed"] else "fail",
                              fails=verdict["fails"], judged=verdict["judged"])
             except Exception as exc:  # 문항 하나가 실패해도 멈추지 않는다
@@ -185,7 +206,7 @@ def write_report(results: list[dict], round_no: int) -> Path:
         f"- 실행 일시: {datetime.now():%Y-%m-%d %H:%M}",
         f"- 모델: `{settings.model_id}` (리전 {settings.region})",
         f"- 데이터: 취약점 스냅샷 {settings.snapshot}, `evaluation/test_queries.csv` {len(results)}건",
-        "- 채점: 코드 채점(라벨, ID, 도구, 금지 문자열)과 LLM 채점(ID가 아닌 기대 항목)",
+        "- 채점: 코드 채점(라벨, ID, 도구, 금지 문자열)과 LLM 채점(ID가 아닌 기대 항목). `ids=exact` 문항은 기대에 없는 ID가 답에 나오면 오답",
         "",
         "## 요약",
         "",
@@ -237,11 +258,36 @@ def write_report(results: list[dict], round_no: int) -> Path:
     return path
 
 
+def rescore(round_no: int) -> None:
+    """저장된 응답(var/eval_roundN.json)을 지금의 인-아웃 세트로 다시 채점한다. 모델을 부르지 않는다.
+
+    ID가 아닌 기대 항목은 저장된 LLM 채점 판정을 그대로 쓴다. 리포트는 고쳐 쓰지 않고 결과만 출력한다.
+    """
+    settings = get_settings()
+    saved = json.loads((settings.db_path.parent / f"eval_round{round_no}.json").read_text(encoding="utf-8"))
+    by_id = {r["id"]: r for r in saved}
+    vulns = sources.load_snapshot()
+    passed = 0
+    for row in load_queries():
+        old = by_id[row["id"]]
+        verdict = grade(row, old["response"], None, None, vulns, judged=old["judged"])
+        passed += verdict["passed"]
+        before, after = old["status"], "pass" if verdict["passed"] else "fail"
+        changed = "" if before == after else f"  ** {before} -> {after}"
+        print(f'[{row["id"]:>2}] {after:5} {row["input"][:36]}{changed}'
+              + ("" if verdict["passed"] else f'  <- {verdict["fails"][0][:100]}'))
+    print(f"\n{round_no}차 응답을 지금 기준으로 다시 채점: {passed}/{len(by_id)}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="인-아웃 세트 채점")
     parser.add_argument("--round", type=int, default=1, help="평가 회차 (리포트 파일 이름에 쓴다)")
     parser.add_argument("--ids", nargs="*", help="일부 문항만 실행 (리포트는 쓰지 않는다)")
+    parser.add_argument("--rescore", action="store_true", help="저장된 응답을 모델 호출 없이 다시 채점한다")
     args = parser.parse_args()
+    if args.rescore:
+        rescore(args.round)
+        return
 
     rows = load_queries()
     if args.ids:
