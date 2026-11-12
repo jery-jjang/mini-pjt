@@ -131,6 +131,8 @@ web/                  로컬 화면 (빌드 없는 HTML·CSS·JS. 서버가 /ui�
 - 도구로 조회한 결과만 근거로 답한다. 근거가 없으면 `no_answer` 라벨로 "확인할 수 없음"이라고 답하고, "안전함"이나 "해당 없음"이라고 하지 않는다.
 - 알림 조건은 CVSS 9.0 이상 또는 KEV 등재. 프로젝트+CVE당 1회, 점수 상승이나 KEV 신규 등재 시 1회 더.
 - 점수는 NVD 우선, 없으면 CNA/OSV, 둘 다 없으면 '점수 미정'. GHSA 별칭은 연결된 CVE ID로 통일한다.
+- 근거 문서 본문에는 제목 줄 다음, 점수 줄 위에 `참고 링크:` 줄을 둔다. 링크는 `src/sources.py`의 일반 코드가 취약점 ID로 만든다(LLM이 만들지 않는다). NVD `https://nvd.nist.gov/vuln/detail/{CVE}`(CVE일 때), OSV `https://osv.dev/vulnerability/{ID}`(항상), GitHub Advisory `https://github.com/advisories/{GHSA}`(GHSA 별칭이 있을 때), CISA KEV `https://www.cisa.gov/known-exploited-vulnerabilities-catalog`(KEV 등재일 때). 교육용 가상 항목(`synthetic`)에는 링크를 붙이지 않는다. 벤더 공지 링크는 넣지 않는다.
+- `contexts` 항목 형식(`doc_id`, `text`)은 바꾸지 않는다. 링크는 `text` 안의 `참고 링크:` 줄로만 싣고, 답변 문장에는 넣지 않는다. 화면은 이 줄을 읽어 링크로 보여 준다.
 - 알림은 기본으로 메일 내용을 파일에 저장한다. 요약에는 CVE ID, 점수 또는 KEV 여부, 제품과 버전을 넣는다.
 - `data/`의 오프라인 스냅샷만 쓴다. 실시간 NVD/OSV 조회와 실제 메일 발송은 이번 PoC에서 만들지 않는다. 설정 항목(`live_lookup`, `send_real_mail`)은 자리만 있고, 실시간 조회를 켜면 만들지 않았다는 오류를 낸다.
 - 스케줄러 주기(기본 6시간), 연속 실패 통지 횟수(기본 2회), 알림 기준 점수(기본 9.0)는 `src/config.py`의 설정값으로 둔다.
