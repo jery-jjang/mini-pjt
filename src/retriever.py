@@ -18,7 +18,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 from rank_bm25 import BM25Okapi
 
-from src import matching
+from src import matching, sources
 
 ID_PATTERN = re.compile(r"(CVE-\d{4}-\d{4,}|GHSA(?:-[0-9a-z]{4}){3})", re.IGNORECASE)
 HANGUL = re.compile(r"[가-힣]")
@@ -111,7 +111,7 @@ def _range_text(rng: dict) -> str:
 
 
 def _doc_text(vuln: dict) -> str:
-    """문서 본문: 취약점 레코드 전체(ID, 별칭, 점수와 출처, KEV 여부, 영향 제품과 버전, 설명문).
+    """문서 본문: 취약점 레코드 전체(ID, 별칭, 참고 링크, 점수와 출처, KEV 여부, 영향 제품과 버전, 설명문).
 
     답에 쓰이는 점수·KEV·영향 범위가 근거 문서에도 들어 있어야 답과 근거를 대조할 수 있다.
     """
@@ -123,8 +123,12 @@ def _doc_text(vuln: dict) -> str:
             _range_text(r) for r in target["ranges"])
         targets.append(f'{target["product"]} {spec}')
     title = vuln["id"] + (f' (별칭: {", ".join(vuln["aliases"])})' if vuln["aliases"] else "")
+    # 참고 링크는 ID로 코드가 만든 공개 정보원 주소다. 점수 줄 위에 둔다
+    links = sources.reference_links(vuln)
+    link_text = " | ".join(f'{l["name"]} {l["url"]}' for l in links) if links else "없음 (교육용 가상 항목)"
     return "\n".join([
         title,
+        f"참고 링크: {link_text}",
         f'점수: {score_text} / CISA KEV: {"등재" if vuln["kev"] else "미등재"}',
         f'영향 제품과 버전: {"; ".join(targets)}',
         f'설명: {vuln["description"]}',

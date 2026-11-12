@@ -197,6 +197,30 @@ def test_근거_문서에는_점수와_KEV와_영향_범위가_들어간다(vuln
     assert "ubuntu 22.04, 23.04" in r.get("CVE-2023-4911")["text"]
 
 
+def test_참고_링크는_ID로_만들고_가상_항목에는_붙이지_않는다(vulns_t1):
+    from src.sources import reference_links
+
+    by_id = {v["id"]: v for v in vulns_t1}
+    log4j = {l["name"]: l["url"] for l in reference_links(by_id["CVE-2021-44228"])}
+    assert log4j == {
+        "NVD": "https://nvd.nist.gov/vuln/detail/CVE-2021-44228",
+        "OSV": "https://osv.dev/vulnerability/CVE-2021-44228",
+        "GitHub Advisory": "https://github.com/advisories/GHSA-jfh8-c2jp-5v3q",  # GHSA 별칭이 있을 때
+        "CISA KEV": "https://www.cisa.gov/known-exploited-vulnerabilities-catalog",  # KEV 등재일 때
+    }
+    # 별칭도 KEV도 없으면 NVD와 OSV만
+    assert [l["name"] for l in reference_links(by_id["CVE-2024-6387"])] == ["NVD", "OSV"]
+    assert reference_links(by_id["GHSA-0000-demo-0001"]) == []  # 교육용 가상 항목에는 실제 페이지가 없다
+
+
+def test_근거_문서의_참고_링크_줄은_점수_줄_위에_있다(vulns_t1):
+    r = VulnRetriever(vulns_t1)
+    lines = r.get("CVE-2021-44228")["text"].splitlines()
+    assert lines[1].startswith("참고 링크: NVD https://nvd.nist.gov/vuln/detail/CVE-2021-44228 | OSV ")
+    assert lines[2].startswith("점수: ")
+    assert r.get("GHSA-0000-demo-0001")["text"].splitlines()[1] == "참고 링크: 없음 (교육용 가상 항목)"
+
+
 def test_근거_문서에_이번_판정이_덧붙는다(session_for):
     s = session_for()
     tools.check_vulnerabilities(s, product="Log4j 2.14.1")

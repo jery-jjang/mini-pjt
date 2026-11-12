@@ -14,7 +14,7 @@
 |---|---|---|---|
 | 1 | LCEL chain (Pydantic 구조화 출력) | Day 1 | `프롬프트 \| 모델.with_structured_output(...)` 체인 네 곳: 등록 문장의 식별자 후보 제시(`src/tools.py`), 문서 검색의 쿼리 확장(`src/retriever.py`), 알림 메일의 취약점 요약(`src/notifier.py`), 평가의 LLM 채점(`evaluation/run_eval.py`) |
 | 2 | ReAct (도구 자율 선택) | Day 3 | `create_agent`에 도구 7개를 붙여 모델이 질문에 맞는 도구를 고른다(`src/agent.py`) |
-| 3 | RAG (하이브리드 검색·쿼리 확장) | Day 2 | 취약점 레코드 20건(점수, KEV 여부, 영향 버전 범위, 설명문)을 검색해 답의 근거로 쓰고 `contexts`에 싣는다. ① 질문의 CVE·GHSA ID는 정확 일치로 먼저 찾고, ② 한글 검색어는 모델이 영어 키워드로 넓히고(구조화 출력), ③ BM25 키워드 검색과 Titan 임베딩 의미 검색의 순위를 RRF로 합친다. 의미 검색은 유사도 0.2 미만을 버려 무관한 질문에는 문서를 내놓지 않는다(`src/retriever.py`). 리랭킹은 하지 않았다 |
+| 3 | RAG (하이브리드 검색·쿼리 확장) | Day 2 | 취약점 레코드 20건(참고 링크, 점수, KEV 여부, 영향 버전 범위, 설명문)을 검색해 답의 근거로 쓰고 `contexts`에 싣는다. 참고 링크는 ID로 코드가 만든 NVD·OSV·GitHub Advisory·CISA KEV 주소다. ① 질문의 CVE·GHSA ID는 정확 일치로 먼저 찾고, ② 한글 검색어는 모델이 영어 키워드로 넓히고(구조화 출력), ③ BM25 키워드 검색과 Titan 임베딩 의미 검색의 순위를 RRF로 합친다. 의미 검색은 유사도 0.2 미만을 버려 무관한 질문에는 문서를 내놓지 않는다(`src/retriever.py`). 리랭킹은 하지 않았다 |
 | 4 | 도구 다중 | Day 4 | SQLite(등록·현황), 버전 판정 코드, 문서 검색, 검색 실행을 각각 도구로 만들었다(`src/tools.py`). "사내 포털의 Nginx 취약점 중 mp4 모듈 관련 건을 설명해줘"(28번)처럼 해당 여부 조회와 문서 검색을 한 질의에서 함께 쓴다. 다만 2차 평가에서 도구를 2개 이상 쓴 질의는 이 1건이고, 외부 API 도구는 없다 |
 | 6 | 가드레일 | Day 5 | 다른 팀 데이터 차단과 '근거 없음' 판정은 코드가 한다. 공격 방법·지시 조작·무관한 질문은 모델이 거절 도구를 불러 기록한다. 모델에 보내는 글에서는 프로젝트명과 팀명을 가린다 |
 | 8 | 미들웨어 | Day 5 | `create_agent`에 미들웨어 두 개를 붙였다(`src/agent.py`). ① 재시도: Bedrock이 다시 시도할 만한 오류(모델이 도구 호출 형식을 잘못 만든 `ModelErrorException`, 일시적인 서버 오류)를 내면 잠시 기다렸다가 최대 2번 다시 부른다. temperature 0에서는 같은 잘못된 호출이 되풀이돼 기본 `ModelRetryMiddleware`로는 풀리지 않아, 다시 부를 때만 temperature를 0.7로 올린다. 하루 한도 초과는 다시 불러도 소용없어 재시도하지 않는다. 늘 오류가 나던 7번 문항이 5번 중 4번 통과하게 됐다. ② 이름 가리기 안전망: 모델에 보내는 메시지 전체를 한 번 더 가려, 도구 하나가 가리기를 빠뜨려도 모델에는 가린 글만 간다 |
@@ -106,7 +106,7 @@ VULNWATCH_REGION=us-east-1
 
 ```
 .venv\Scripts\python -m uvicorn app:app                    서버 실행. 화면은 http://127.0.0.1:8000/ui/
-.venv\Scripts\python -m pytest tests -q                    자동 테스트 148건 (실제 LLM 호출 없음)
+.venv\Scripts\python -m pytest tests -q                    자동 테스트 150건 (실제 LLM 호출 없음)
 .venv\Scripts\python evaluation/run_eval.py --round 1      인-아웃 세트 25건 평가 (실제 Bedrock 호출)
 .venv\Scripts\python evaluation/run_ragas.py --round 1     RAGAS 지표 (설치 방법은 requirements.txt 아래쪽)
 .venv\Scripts\python -m src.scheduler --snapshot T2        검색 1회 실행 (알림 메일은 outbox/에 저장)
@@ -281,12 +281,13 @@ Windows에서 `curl -d "{...한글...}"`처럼 한글 질문을 명령줄에 직
 
 ## 핵심 코드 위치
 
-- `src/agent.py:211` — 메인 에이전트(`answer_question`): 이름 가리기, `create_agent`, LangSmith 추적, 라벨 결정
-- `src/agent.py:106` — 미들웨어: 이름 가리기 안전망(`MaskingMiddleware`), 재시도(`RetryMiddleware`)
+- `src/agent.py:212` — 메인 에이전트(`answer_question`): 이름 가리기, `create_agent`, LangSmith 추적, 라벨 결정
+- `src/agent.py:107` — 미들웨어: 이름 가리기 안전망(`MaskingMiddleware`), 재시도(`RetryMiddleware`)
 - `src/agent.py:23` — 시스템 프롬프트
 - `src/tools.py:416` — 에이전트용 도구 7개(`build_tools`)
 - `src/tools.py:236` — 해당 여부 조회 도구(`check_vulnerabilities`), `src/tools.py:347` — 문서 검색 도구(`search_vuln_docs`)
-- `src/retriever.py:134` — RAG 파이프라인(`VulnRetriever`: ID 일치, 쿼리 확장, BM25·벡터 하이브리드)
+- `src/retriever.py:138` — RAG 파이프라인(`VulnRetriever`: ID 일치, 쿼리 확장, BM25·벡터 하이브리드)
+- `src/sources.py` `reference_links` — 근거 문서의 참고 링크(취약점 ID로 공개 정보원 주소를 만든다)
 - `src/matching.py:35` — 해당 여부 판정(`is_affected`), `src/matching.py:99` — 알림 판정(`alert_reason`)
 - `src/auth.py:23` — 다른 팀 접근 차단(`can_access`)
 - `src/scheduler.py:22` — 검색 1회 실행(`run_once`), `src/scheduler.py:93` — 주기 검색(`Scheduler`, 재시작 없이 주기 변경), `src/notifier.py:70` — 알림 메일 저장

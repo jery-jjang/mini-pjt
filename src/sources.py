@@ -21,3 +21,32 @@ def load_snapshot(snapshot: str | None = None, data_dir=None) -> list[dict]:
         return json.loads(path.read_text(encoding="utf-8"))["vulnerabilities"]
     except (OSError, ValueError, KeyError) as exc:
         raise SourceError(f"스냅샷을 읽지 못했습니다: {path.name}") from exc
+
+
+# ---------------- 참고 링크 ----------------
+# 근거 문서에 붙이는 공개 정보원 주소. 취약점 ID로 정해진 규칙에 따라 만든다(LLM이 만들지 않는다).
+NVD_URL = "https://nvd.nist.gov/vuln/detail/{id}"
+OSV_URL = "https://osv.dev/vulnerability/{id}"
+GHSA_URL = "https://github.com/advisories/{id}"
+KEV_URL = "https://www.cisa.gov/known-exploited-vulnerabilities-catalog"
+
+
+def reference_links(vuln: dict) -> list[dict]:
+    """취약점 레코드의 참고 링크 목록 [{name, url}]. 교육용 가상 항목은 빈 목록.
+
+    NVD는 CVE일 때, OSV는 항상, GitHub Advisory는 GHSA ID(본 ID 또는 별칭)가 있을 때,
+    CISA KEV는 KEV에 등재됐을 때 붙인다.
+    """
+    if vuln.get("synthetic"):
+        return []
+    vid = vuln["id"]
+    links = []
+    if vid.upper().startswith("CVE-"):
+        links.append({"name": "NVD", "url": NVD_URL.format(id=vid)})
+    links.append({"name": "OSV", "url": OSV_URL.format(id=vid)})
+    ghsa = [a for a in [vid, *vuln.get("aliases", [])] if a.upper().startswith("GHSA-")]
+    if ghsa:
+        links.append({"name": "GitHub Advisory", "url": GHSA_URL.format(id=ghsa[0])})
+    if vuln.get("kev"):
+        links.append({"name": "CISA KEV", "url": KEV_URL})
+    return links
