@@ -288,8 +288,19 @@ function renderDetail() {
       : el("span", { class: "muted", text: "없음" })),
     block(`근거 문서 (contexts) ${r.contexts.length}건`, r.contexts.length > 0,
       r.contexts.length
-        ? r.contexts.map((c) => el("div", { class: "doc" },
-            el("div", { class: "mono", text: c.doc_id }), el("pre", { class: "code", text: c.text })))
+        ? r.contexts.map((c) => {
+            const { links, rest } = splitLinks(c.text);
+            return el("div", { class: "doc" },
+              el("div", { class: "mono", text: c.doc_id }),
+              links.length
+                ? el("div", { class: "links", role: "list", "aria-label": `${c.doc_id} 참고 링크` },
+                    links.map((l) => el("a", {
+                      role: "listitem", class: "link-chip", href: l.url, target: "_blank", rel: "noopener noreferrer",
+                      title: l.url, "aria-label": `${l.name}에서 ${c.doc_id} 보기 (새 탭)`,
+                    }, l.name, externalIcon())))
+                : el("p", { class: "muted small", text: "참고 링크 없음 (교육용 가상 항목)" }),
+              el("pre", { class: "code", text: rest }));
+          })
         : [el("p", { class: "muted small", text: "이 답변에는 근거로 쓴 취약점 문서가 없습니다." })]),
     block(`실행 기록 (trace) ${r.trace.length}단계`, false,
       r.trace.map((t, i) => el("div", { class: "step" },
@@ -297,6 +308,42 @@ function renderDetail() {
         el("div", { class: "detail-label", text: "입력" }), el("pre", { class: "code", text: t.input }),
         el("div", { class: "detail-label", text: "출력" }), el("pre", { class: "code", text: t.output })))),
   );
+}
+
+// 근거 문서의 "참고 링크:" 줄은 서버 코드가 만든 고정 형식이다: "이름 URL | 이름 URL ..."
+// 알려진 공개 정보원(https)만 링크로 만든다.
+const LINK_HOSTS = ["nvd.nist.gov", "osv.dev", "github.com", "www.cisa.gov"];
+
+/** 문서 본문에서 참고 링크 줄을 꺼내 [{name, url}]과 나머지 본문으로 나눈다. */
+function splitLinks(text) {
+  const lines = String(text || "").split("\n");
+  const index = lines.findIndex((line) => line.startsWith("참고 링크:"));
+  if (index < 0) return { links: [], rest: text };
+  const links = [];
+  for (const part of lines[index].slice("참고 링크:".length).split("|")) {
+    const m = part.trim().match(/^(.+?)\s+(https:\/\/\S+)$/);
+    if (!m) continue;
+    try {
+      const url = new URL(m[2]);
+      if (url.protocol === "https:" && LINK_HOSTS.includes(url.hostname)) links.push({ name: m[1], url: url.href });
+    } catch (_) { /* 주소가 아니면 건너뛴다 */ }
+  }
+  lines.splice(index, 1);
+  return { links, rest: lines.join("\n") };
+}
+
+function externalIcon() {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("class", "icon icon-sm");
+  svg.setAttribute("aria-hidden", "true");
+  for (const d of ["M15 3h6v6", "M10 14 21 3", "M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"]) {
+    const path = document.createElementNS(ns, "path");
+    path.setAttribute("d", d);
+    svg.append(path);
+  }
+  return svg;
 }
 
 function row(name, value) {
