@@ -83,7 +83,7 @@ def get_settings() -> Settings:
         alert_cvss_threshold=float(os.environ.get("VULNWATCH_ALERT_CVSS_THRESHOLD", "9.0")),
         send_real_mail=_flag("VULNWATCH_SEND_REAL_MAIL", False),
         live_lookup=_flag("VULNWATCH_LIVE_LOOKUP", False),
-        model_id=os.environ.get("VULNWATCH_MODEL_ID", "global.anthropic.claude-sonnet-4-5-20250929-v1:0"),
+        model_id=os.environ.get("VULNWATCH_MODEL_ID", "us.amazon.nova-pro-v1:0"),
         region=os.environ.get("VULNWATCH_REGION", "us-east-1"),
         langsmith_tracing=_flag("LANGSMITH_TRACING", False),
         embed_model_id=os.environ.get("VULNWATCH_EMBED_MODEL_ID", "amazon.titan-embed-text-v2:0"),
