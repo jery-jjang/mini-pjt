@@ -381,3 +381,12 @@ dialog::backdrop { background: rgba(2, 6, 23, 0.6); }
 .segmented { border-radius: 14px; background: var(--surface-2); box-shadow: 0 2px 0 var(--edge); }
 .segment { border-radius: 10px; }
 .msg-bot[aria-pressed="true"] { box-shadow: 0 4px 0 var(--primary-edge), 0 8px 20px var(--selected-shadow); }
+
+/* 검색 주기: 시간·분 입력 */
+.interval-fields { border: none; margin: 0; padding: 0; min-width: 0; }
+.interval-fields legend { padding: 0; margin-bottom: var(--space-1); }
+.interval-row { display: flex; gap: var(--space-3); }
+.interval-part { display: flex; align-items: center; gap: var(--space-2); flex: 1; }
+.interval-part input { width: 100%; min-height: 44px; padding: 0 var(--space-3); font-family: var(--mono); }
+.interval-part input[aria-invalid="true"] { border-color: var(--danger); }
+.interval-part span { color: var(--muted); white-space: nowrap; }

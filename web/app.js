@@ -80,10 +80,18 @@ function formatTime(iso) {
   return d.toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
+/** 시간(소수)을 분 단위로 반올림한 {hours, minutes}로 나눈다. */
+function splitHours(h) {
+  const total = Math.max(0, Math.round(Number(h) * 60));
+  return { hours: Math.floor(total / 60), minutes: total % 60 };
+}
+
+/** 검색 주기를 "6시간", "1시간 30분", "5분"처럼 보여 준다. */
 function formatHours(h) {
   if (h === null || h === undefined) return "-";
-  if (h < 1) return `${Math.round(h * 60)}분`;
-  return `${Number.isInteger(h) ? h : h.toFixed(2).replace(/0+$/, "")}시간`;
+  const { hours, minutes } = splitHours(h);
+  if (!hours && !minutes) return "1분 미만";
+  return [hours ? `${hours}시간` : "", minutes ? `${minutes}분` : ""].filter(Boolean).join(" ");
 }
 
 /** API를 부른다. 오류면 {status, detail}을 던진다. */
@@ -570,38 +578,53 @@ function showSettings(s) {
   $("set-interval").textContent = formatHours(s.scan_interval_hours);
   $("set-last").textContent = formatTime(s.last_run_at);
   $("set-next").textContent = formatTime(s.next_run_at);
-  $("interval-input").value = s.scan_interval_hours;
+  const { hours, minutes } = splitHours(s.scan_interval_hours);
+  $("interval-hours").value = hours;
+  $("interval-minutes").value = minutes;
 }
 
 function openSettings() {
   const admin = currentAccount().id === "security_admin";
-  $("interval-input").disabled = !admin;
+  for (const id of ["interval-hours", "interval-minutes"]) {
+    $(id).disabled = !admin;
+    $(id).removeAttribute("aria-invalid");
+  }
   $("interval-save").disabled = !admin;
   $("interval-error").textContent = admin ? "" : "지금 계정은 주기를 바꿀 수 없습니다. 보안 담당자로 바꿔 주세요.";
-  $("interval-input").removeAttribute("aria-invalid");
   loadSettings();
   $("settings-dialog").showModal();
 }
 
+/** 화면의 시간·분 입력을 검사한다. 맞으면 API에 보낼 시간 값, 틀리면 {error, field}. */
+function readInterval() {
+  const hText = $("interval-hours").value.trim();
+  const mText = $("interval-minutes").value.trim();
+  const h = hText === "" ? 0 : Number(hText);
+  const m = mText === "" ? 0 : Number(mText);
+  if (!Number.isInteger(h) || h < 0) return { error: "시간은 0 이상의 정수로 넣어 주세요.", field: "interval-hours" };
+  if (!Number.isInteger(m) || m < 0 || m > 59) return { error: "분은 0~59 사이의 정수로 넣어 주세요.", field: "interval-minutes" };
+  if (h === 0 && m === 0) return { error: "주기는 1분 이상이어야 합니다.", field: "interval-minutes" };
+  return { hours: h + m / 60 }; // API는 시간 단위(소수)를 받는다
+}
+
 async function saveInterval() {
-  const input = $("interval-input");
   const error = $("interval-error");
-  const hours = Number(input.value);
-  if (!input.value || !Number.isFinite(hours) || hours <= 0) {
-    input.setAttribute("aria-invalid", "true");
-    error.textContent = "0보다 큰 숫자를 넣어 주세요.";
-    input.focus();
+  for (const id of ["interval-hours", "interval-minutes"]) $(id).removeAttribute("aria-invalid");
+  const value = readInterval();
+  if (value.error) {
+    $(value.field).setAttribute("aria-invalid", "true");
+    error.textContent = value.error;
+    $(value.field).focus();
     return;
   }
   $("interval-save").disabled = true;
   try {
-    const s = await api("/settings/scan-interval", { method: "PUT", body: { hours } });
-    input.removeAttribute("aria-invalid");
+    const s = await api("/settings/scan-interval", { method: "PUT", body: { hours: value.hours } });
     error.textContent = "";
     showSettings(s);
     $("set-interval").textContent = `${formatHours(s.scan_interval_hours)} (바꿨습니다)`;
   } catch (err) {
-    input.setAttribute("aria-invalid", "true");
+    $("interval-hours").setAttribute("aria-invalid", "true");
     error.textContent = err.detail;
   } finally {
     $("interval-save").disabled = currentAccount().id !== "security_admin";
