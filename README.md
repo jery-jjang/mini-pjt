@@ -106,7 +106,7 @@ VULNWATCH_REGION=us-east-1
 
 ```
 .venv\Scripts\python -m uvicorn app:app                    서버 실행. 화면은 http://127.0.0.1:8000/ui/
-.venv\Scripts\python -m pytest tests -q                    자동 테스트 154건 (실제 LLM 호출 없음)
+.venv\Scripts\python -m pytest tests -q                    자동 테스트 158건 (실제 LLM 호출 없음)
 .venv\Scripts\python evaluation/run_eval.py --round 1      인-아웃 세트 25건 평가 (실제 Bedrock 호출)
 .venv\Scripts\python evaluation/run_ragas.py --round 1     RAGAS 지표 (설치 방법은 requirements.txt 아래쪽)
 .venv\Scripts\python -m src.scheduler --snapshot T2        검색 1회 실행 (알림 메일은 outbox/에 저장)
@@ -159,7 +159,8 @@ Invoke-RestMethod http://127.0.0.1:8000/settings/scan-interval -Method Put -Cont
 
 | 요청 | 권한 | 내용 |
 |---|---|---|
-| `GET /projects` | 토큰 기준(없으면 팀 A 팀원) | 계정이 볼 수 있는 프로젝트와 등록 항목(입력 문장, 표준 제품 이름, 버전, 감시 여부). 알림 수신 주소는 주지 않습니다. 모르는 토큰은 401 |
+| `GET /projects` | 토큰 기준(없으면 팀 A 팀원) | 계정이 볼 수 있는 프로젝트와 지우지 않은 등록 항목(항목 번호, 입력 문장, 표준 제품 이름, 버전, 감시 여부). 알림 수신 주소는 주지 않습니다. 모르는 토큰은 401 |
+| `DELETE /projects/{project_id}/items/{item_id}` | 팀원은 자기 팀, 보안 담당자는 전체 | 등록한 SW 하나를 지웁니다(삭제 표시, 기록은 남김). 모르는 토큰 401, 다른 팀 403, 없거나 이미 지운 항목 404 |
 
 질문을 API로 직접 보낼 수도 있습니다. 브라우저에서 `http://127.0.0.1:8000/docs`를 열어 `POST /query`를 실행하거나, PowerShell에서는 아래처럼 보냅니다.
 

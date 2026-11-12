@@ -236,7 +236,7 @@ def test_API_등록_목록은_계정이_볼_수_있는_프로젝트만_준다(cl
     assert sorted(p["name"] for p in body["projects"]) == sorted(names)
     assert "alert_email" not in res.text and "@" not in res.text  # 알림 수신 주소는 내주지 않는다
     items = [i for p in body["projects"] for i in p["items"]]
-    assert items and all(set(i) == {"raw_text", "product", "version", "monitored"} for i in items)
+    assert items and all(set(i) == {"id", "raw_text", "product", "version", "monitored"} for i in items)
 
 
 def test_API_등록_목록은_감시_불가_항목을_표시하고_모르는_토큰은_401(client):
@@ -244,6 +244,34 @@ def test_API_등록_목록은_감시_불가_항목을_표시하고_모르는_토
     portal = next(p for p in c.get("/projects").json()["projects"] if p["name"] == "사내 포털")
     assert any(not i["monitored"] for i in portal["items"])
     assert c.get("/projects", headers={"Authorization": "Bearer wrong"}).status_code == 401
+
+
+def _portal_items(c, headers=None):
+    return next(p for p in c.get("/projects", headers=headers or {}).json()["projects"] if p["name"] == "사내 포털")["items"]
+
+
+def test_API_팀원은_자기_팀_SW를_지울_수_있다(client):
+    c, _ = client
+    nginx = next(i for i in _portal_items(c) if i["product"] == "NGINX")
+    res = c.delete(f"/projects/portal/items/{nginx['id']}")  # 토큰 없음 = 팀 A 팀원
+    assert res.status_code == 200 and res.json()["removed"]["id"] == nginx["id"] and res.json()["project"] == "사내 포털"
+    assert all(i["id"] != nginx["id"] for i in _portal_items(c))  # 목록에서 빠진다
+    again = c.delete(f"/projects/portal/items/{nginx['id']}")
+    assert again.status_code == 404 and "이미" in again.json()["detail"]
+
+
+def test_API_다른_팀_SW는_지울_수_없고_보안_담당자는_전체를_지운다(client):
+    c, _ = client
+    nginx = next(i for i in _portal_items(c) if i["product"] == "NGINX")
+    team_b = {"Authorization": "Bearer demo-token-team-b"}
+    res = c.delete(f"/projects/portal/items/{nginx['id']}", headers=team_b)
+    assert res.status_code == 403 and "다른 팀" in res.json()["detail"]
+    assert any(i["id"] == nginx["id"] for i in _portal_items(c))  # 지워지지 않았다
+    assert c.delete(f"/projects/portal/items/{nginx['id']}", headers={"Authorization": "Bearer wrong"}).status_code == 401
+    assert c.delete("/projects/portal/items/99999").status_code == 404
+    assert c.delete(f"/projects/nowhere/items/{nginx['id']}").status_code == 404
+    admin = {"Authorization": "Bearer demo-token-security"}
+    assert c.delete(f"/projects/portal/items/{nginx['id']}", headers=admin).status_code == 200
 
 
 def test_화면은_ui에서_열린다(client):

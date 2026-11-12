@@ -26,10 +26,14 @@ CREATE TABLE IF NOT EXISTS findings (
 CREATE TABLE IF NOT EXISTS alerts (
     id INTEGER PRIMARY KEY AUTOINCREMENT, project TEXT NOT NULL, vuln_id TEXT NOT NULL,
     reason TEXT NOT NULL, score REAL, kev INTEGER NOT NULL, sent_at TEXT NOT NULL, file TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS item_removals (
+    item_id INTEGER PRIMARY KEY, previous_status TEXT NOT NULL, removed_at TEXT NOT NULL, removed_by TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS alert_resets (
+    project TEXT NOT NULL, vuln_id TEXT NOT NULL, after_alert_id INTEGER NOT NULL);
 """
 
 TABLES = ["meta", "teams", "accounts", "projects", "products", "items", "mappings",
-          "pending_candidates", "findings", "alerts"]
+          "pending_candidates", "findings", "alerts", "item_removals", "alert_resets"]
 
 
 def connect(db_path) -> sqlite3.Connection:
@@ -108,8 +112,12 @@ def list_products(conn) -> list[dict]:
 
 
 def list_items(conn, project_id: str) -> list[dict]:
-    """프로젝트에 등록된 항목 목록."""
-    rows = conn.execute("SELECT * FROM items WHERE project = ? ORDER BY id", (project_id,)).fetchall()
+    """프로젝트에 등록된 항목 목록. 삭제한 항목(status='removed')은 뺀다.
+
+    조회·현황·주기 검색·중복 확인이 모두 이 함수를 거치므로, 지운 항목은 모든 곳에서 빠진다.
+    """
+    rows = conn.execute("SELECT * FROM items WHERE project = ? AND status != 'removed' ORDER BY id",
+                        (project_id,)).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -161,6 +169,40 @@ def add_item(conn, project_id: str, raw_text: str, product, version, status: str
     return cur.lastrowid
 
 
+def get_item(conn, project_id: str, item_id: int) -> dict | None:
+    """프로젝트의 삭제되지 않은 항목 하나. 없거나 이미 지웠으면 None."""
+    row = conn.execute("SELECT * FROM items WHERE id = ? AND project = ? AND status != 'removed'",
+                       (item_id, project_id)).fetchone()
+    return dict(row) if row else None
+
+
+def remove_item(conn, project_id: str, item_id: int, account_id: str, removed_at: str) -> dict | None:
+    """항목을 삭제 표시한다(soft delete). 지운 항목을 돌려주고, 없거나 이미 지웠으면 None.
+
+    - 항목 상태를 removed로 바꾸고 삭제 기록(이전 상태, 시각, 계정)을 남긴다. 알림 이력은 지우지 않는다.
+    - 이 삭제로 프로젝트에 같은 표준 제품이 하나도 남지 않으면, 그 제품의 탐지 기록을 지우고
+      관련 취약점의 알림을 초기화한다. 같은 SW를 다시 등록하면 알림 조건에 따라 다시 알린다.
+    """
+    item = get_item(conn, project_id, item_id)
+    if item is None:
+        return None
+    conn.execute("UPDATE items SET status = 'removed' WHERE id = ?", (item_id,))
+    conn.execute("INSERT OR REPLACE INTO item_removals VALUES (?, ?, ?, ?)",
+                 (item_id, item["status"], removed_at, account_id))
+    product = item["product"]
+    still_used = product and any(i["product"] == product for i in list_items(conn, project_id))
+    if product and not still_used:
+        vulns = [r["vuln_id"] for r in conn.execute(
+            "SELECT vuln_id FROM findings WHERE project = ? AND product = ?", (project_id, product))]
+        for vuln_id in vulns:
+            last = conn.execute("SELECT COALESCE(MAX(id), 0) FROM alerts WHERE project = ? AND vuln_id = ?",
+                                (project_id, vuln_id)).fetchone()[0]
+            conn.execute("INSERT INTO alert_resets VALUES (?, ?, ?)", (project_id, vuln_id, last))
+        conn.execute("DELETE FROM findings WHERE project = ? AND product = ?", (project_id, product))
+    conn.commit()
+    return item
+
+
 def save_mapping(conn, raw_text: str, product: str) -> None:
     """확정한 매핑을 저장해 다음 등록에서 다시 쓴다."""
     conn.execute("INSERT OR REPLACE INTO mappings VALUES (?, ?)", (_raw_key(raw_text), product))
@@ -189,9 +231,16 @@ def save_finding(conn, project_id: str, match: dict) -> None:
 
 
 def last_alert(conn, project_id: str, vuln_id: str):
-    """이 (프로젝트, 취약점)에 마지막으로 보낸 알림. 없으면 None."""
-    row = conn.execute("SELECT * FROM alerts WHERE project = ? AND vuln_id = ? ORDER BY id DESC LIMIT 1",
-                       (project_id, vuln_id)).fetchone()
+    """이 (프로젝트, 취약점)에 마지막으로 보낸 알림. 없으면 None.
+
+    SW를 지워 알림을 초기화한 적이 있으면(alert_resets) 그 뒤에 보낸 알림만 본다.
+    그래서 지운 SW를 다시 등록하면 처음 등록한 것처럼 다시 알린다.
+    """
+    row = conn.execute(
+        "SELECT * FROM alerts WHERE project = ? AND vuln_id = ? AND id > COALESCE("
+        "(SELECT MAX(after_alert_id) FROM alert_resets WHERE project = ? AND vuln_id = ?), 0) "
+        "ORDER BY id DESC LIMIT 1",
+        (project_id, vuln_id, project_id, vuln_id)).fetchone()
     return dict(row) | {"kev": bool(row["kev"])} if row else None
 
 

@@ -1,6 +1,7 @@
 """API 진입점 (FastAPI). POST /query와, UI가 쓰는 등록 목록·주기 검색 설정 API, 화면 파일(/ui)."""
 
 import logging
+from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 
 from botocore.exceptions import BotoCoreError, ClientError
@@ -91,6 +92,7 @@ class SettingsResponse(BaseModel):
 class ItemOut(BaseModel):
     """프로젝트에 등록된 SW 항목."""
 
+    id: int  # 삭제할 때 쓰는 항목 번호
     raw_text: str  # 사용자가 등록할 때 쓴 문장
     product: str | None  # 확정된 표준 제품 이름. 매핑이 확정되지 않았으면 None
     version: str | None
@@ -169,12 +171,47 @@ def read_projects(authorization: str | None = Header(default=None)):
     names = {p["key"]: p["name"] for p in storage.list_products(conn)}
     projects = []
     for p in auth.accessible_projects(conn, account):
-        items = [{"raw_text": i["raw_text"], "product": names.get(i["product"]) if i["product"] else None,
-                  "version": i["version"], "monitored": i["status"] == "confirmed"}
-                 for i in storage.list_items(conn, p["id"])]
+        items = [_item_out(i, names) for i in storage.list_items(conn, p["id"])]
         projects.append({"id": p["id"], "name": p["name"], "team": teams.get(p["team"], p["team"]), "items": items})
     return {"account": {"id": account["id"], "name": account["name"], "role": account["role"]},
             "projects": projects}
+
+
+def _item_out(item: dict, names: dict) -> dict:
+    """등록 항목을 화면에 보낼 모양으로 바꾼다."""
+    return {"id": item["id"], "raw_text": item["raw_text"],
+            "product": names.get(item["product"]) if item["product"] else None,
+            "version": item["version"], "monitored": item["status"] == "confirmed"}
+
+
+class RemovedResponse(BaseModel):
+    """지운 항목."""
+
+    project: str
+    removed: ItemOut
+
+
+@app.delete("/projects/{project_id}/items/{item_id}", response_model=RemovedResponse)
+def delete_item(project_id: str, item_id: int, authorization: str | None = Header(default=None)):
+    """등록한 SW 하나를 지운다(삭제 표시). 화면의 삭제 버튼이 확인 창을 거쳐 부른다. LLM을 거치지 않는다.
+
+    팀원은 자기 팀 프로젝트, 보안 담당자는 전체를 지울 수 있다. 권한은 코드가 확인한다.
+    지운 항목은 감시와 알림에서 빠지고, 알림 이력은 남는다. 같은 SW를 다시 등록하면 다시 알린다.
+    모르는 토큰 401, 다른 팀 프로젝트 403, 없거나 이미 지운 항목 404.
+    """
+    conn = app.state.conn
+    account = _account(authorization)
+    project = next((p for p in storage.list_projects(conn) if p["id"] == project_id), None)
+    if project is None:
+        raise HTTPException(status_code=404, detail="프로젝트를 찾을 수 없습니다.")
+    if not auth.can_access(account, project):
+        raise HTTPException(status_code=403, detail="다른 팀 프로젝트의 SW는 지울 수 없습니다.")
+    removed = storage.remove_item(conn, project_id, item_id, account["id"],
+                                  datetime.now(timezone.utc).isoformat(timespec="seconds"))
+    if removed is None:
+        raise HTTPException(status_code=404, detail="지울 항목이 없습니다. 이미 지웠을 수 있습니다.")
+    names = {p["key"]: p["name"] for p in storage.list_products(conn)}
+    return {"project": project["name"], "removed": _item_out(removed, names)}
 
 
 @app.get("/settings", response_model=SettingsResponse)

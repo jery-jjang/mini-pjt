@@ -101,3 +101,34 @@ def test_지금_1회_실행_도구는_볼_수_있는_프로젝트만_알려_준�
     assert result["status"] == "ok" and result["saved_mails"] == 1
     assert [m["project"] for m in result["mails"]] == ["배치 서버"]
     assert len(mails(outbox)) == 3  # 검색 자체는 전체 프로젝트를 대상으로 한다
+
+
+# ---------------- SW 삭제 ----------------
+
+def _item_id(conn, project, product):
+    return next(i["id"] for i in storage.list_items(conn, project) if i["product"] == product)
+
+
+def test_지운_SW는_감시에서_빠지고_이력은_남는다(conn, outbox, summary_llm):
+    scheduler.run_once(conn, llm=summary_llm, snapshot="T1")
+    log4j = _item_id(conn, "pay-api", "log4j")
+    removed = storage.remove_item(conn, "pay-api", log4j, "team_a_member", "2026-11-12T00:00:00+00:00")
+    assert removed["raw_text"] == "Log4j 2.14.1"
+    assert all(i["product"] != "log4j" for i in storage.list_items(conn, "pay-api"))  # 목록·검색에서 빠진다
+    record = conn.execute("SELECT * FROM item_removals WHERE item_id = ?", (log4j,)).fetchone()
+    assert record["previous_status"] == "confirmed" and record["removed_by"] == "team_a_member"
+    assert "CVE-2021-44228" in {a["vuln_id"] for a in storage.list_alerts(conn, "pay-api")}  # 알림 이력은 남는다
+    assert conn.execute("SELECT COUNT(*) FROM findings WHERE project='pay-api' AND product='log4j'").fetchone()[0] == 0
+    assert storage.remove_item(conn, "pay-api", log4j, "team_a_member", "2026-11-12T00:00:00+00:00") is None  # 두 번은 못 지운다
+    again = scheduler.run_once(conn, llm=summary_llm, snapshot="T1")
+    assert "CVE-2021-44228" not in alerted(again).get("pay-api", set())
+
+
+def test_지운_SW를_다시_등록하면_다시_알린다(conn, outbox, summary_llm):
+    first = scheduler.run_once(conn, llm=summary_llm, snapshot="T1")
+    assert reasons(first, "pay-api")["CVE-2021-44228"] == "new"
+    storage.remove_item(conn, "pay-api", _item_id(conn, "pay-api", "log4j"), "team_a_member", "2026-11-12T00:00:00+00:00")
+    storage.add_item(conn, "pay-api", "Log4j 2.14.1", "log4j", "2.14.1", "confirmed")  # 다시 등록
+    report = scheduler.run_once(conn, llm=summary_llm, snapshot="T1")
+    assert {v: r for v, r in reasons(report, "pay-api").items()} == {"CVE-2021-44228": "new"}  # Log4j 건만 다시 알린다
+    assert len(storage.list_alerts(conn, "pay-api")) == 5  # 처음 4건 + 다시 알린 1건, 이력은 그대로 쌓인다
