@@ -175,7 +175,13 @@ def propose_candidates(session: Session, project: str, product_text: str) -> dic
 
     products = storage.list_products(session.conn)
     by_key = {p["key"]: p for p in products}
+    raw_text = f"{name} {version}"
     known = storage.get_mapping(session.conn, name)
+    # 중복 등록은 코드가 막는다: 같은 입력 문장, 또는 저장된 매핑으로 본 같은 제품·버전이 이미 있으면 후보를 내지 않는다
+    existing = storage.find_item_by_text(session.conn, proj["id"], raw_text) or (
+        storage.find_item(session.conn, proj["id"], known, version) if known else None)
+    if existing:
+        return _already_registered(session, proj, existing, by_key)
     if known:
         keys, how = [known], "이전에 확정한 매핑"
     elif session.llm is not None:
@@ -184,7 +190,6 @@ def propose_candidates(session: Session, project: str, product_text: str) -> dic
         found = _find_product(session.conn, name)
         keys, how = ([found["key"]] if found else []), "이름 일치"
 
-    raw_text = f"{name} {version}"
     if not keys:
         storage.add_item(session.conn, proj["id"], raw_text, None, version, "unconfirmed")
         return _result(session, "registered_unmonitored",
@@ -199,6 +204,16 @@ def propose_candidates(session: Session, project: str, product_text: str) -> dic
                    project=proj["name"], input=raw_text, source=how, candidates=candidates)
 
 
+def _already_registered(session: Session, project: dict, item: dict, by_key: dict) -> dict:
+    """이미 등록된 항목이라 새로 등록하지 않았다고 알린다."""
+    name = by_key[item["product"]]["name"] if item["product"] in by_key else item["raw_text"]
+    label = f'{name} {item["version"]}' if item["product"] else item["raw_text"]
+    state = "감시 중" if item["status"] == "confirmed" else "감시 불가"
+    return _result(session, "already_registered",
+                   f"'{label}'은(는) 이미 이 프로젝트에 등록돼 있습니다({state}). 새로 등록하지 않았습니다.",
+                   project=project["name"], item=label, monitored=item["status"] == "confirmed")
+
+
 def confirm_registration(session: Session, choice: int) -> dict:
     """대기 중인 후보 가운데 고른 번호를 확정해 프로젝트에 등록한다. 확정 즉시 반영된다."""
     pending = storage.get_pending(session.conn, session.account["id"])
@@ -209,6 +224,11 @@ def confirm_registration(session: Session, choice: int) -> dict:
         numbers = ", ".join(str(c["no"]) for c in pending["candidates"])
         return _result(session, "invalid_choice", f"{choice}번 후보는 없습니다. 고를 수 있는 번호: {numbers}")
     project = storage.find_project(session.conn, pending["project"])
+    # 확정 직전에 한 번 더 확인한다. 후보 이름이 달라도 같은 표준 제품·버전이 이미 있으면 추가하지 않는다
+    existing = storage.find_item(session.conn, project["id"], picked["product"], pending["version"])
+    if existing:
+        storage.clear_pending(session.conn, session.account["id"])
+        return _already_registered(session, project, existing, {p["key"]: p for p in storage.list_products(session.conn)})
     storage.add_item(session.conn, project["id"], pending["raw_text"], picked["product"], pending["version"], "confirmed")
     storage.save_mapping(session.conn, pending["raw_text"], picked["product"])
     storage.clear_pending(session.conn, session.account["id"])

@@ -86,6 +86,39 @@ def test_없는_번호는_확정할_수_없다(session_for):
     assert tools.confirm_registration(session_for(), 3)["status"] == "invalid_choice"
 
 
+def test_같은_SW와_버전은_다시_등록하지_않는다(session_for, conn):
+    before = len(storage.list_items(conn, "portal"))  # 사내 포털에는 Nginx 1.24.0이 이미 있다
+    for text in ("nginx 1.24.0", "NGINX  1.24.0"):  # 띄어쓰기·대소문자는 무시
+        result = tools.propose_candidates(session_for(), "사내 포털", text)
+        assert result["status"] == "already_registered" and result["monitored"] is True
+        assert "이미" in result["message"]
+    assert len(storage.list_items(conn, "portal")) == before
+    assert storage.get_pending(conn, "team_a_member") is None  # 확정할 후보도 남기지 않는다
+
+
+def test_다른_이름으로_후보를_내도_확정할_때_중복을_막는다(session_for, conn):
+    before = len(storage.list_items(conn, "portal"))
+    proposed = tools.propose_candidates(session_for(llm=FakeLLM(["nginx"])), "사내 포털", "엔진엑스 웹서버 1.24.0")
+    assert proposed["status"] == "candidates"  # 처음 보는 이름이라 후보는 낸다
+    done = tools.confirm_registration(session_for(), 1)
+    assert done["status"] == "already_registered" and done["item"] == "NGINX 1.24.0"
+    assert len(storage.list_items(conn, "portal")) == before
+    assert storage.get_pending(conn, "team_a_member") is None
+
+
+def test_감시_불가_항목도_같은_문장이면_다시_등록하지_않는다(session_for, conn):
+    before = len(storage.list_items(conn, "portal"))
+    result = tools.propose_candidates(session_for(llm=FakeLLM([])), "사내 포털", "사내 공통 로깅 모듈 2.1")
+    assert result["status"] == "already_registered" and result["monitored"] is False
+    assert len(storage.list_items(conn, "portal")) == before
+
+
+def test_다른_버전이나_다른_프로젝트는_중복이_아니다(session_for):
+    assert tools.propose_candidates(session_for(), "사내 포털", "nginx 1.26.0")["status"] == "candidates"
+    assert tools.propose_candidates(session_for(), "결제 API", "nginx 1.24.0")["status"] == "candidates"
+    assert tools.propose_candidates(session_for(), "사내 포털", "nginx 1.24")["status"] == "candidates"  # 표기는 맞추지 않는다
+
+
 def test_다른_팀_프로젝트에는_등록할_수_없다(session_for, conn):
     s = session_for()
     assert tools.propose_candidates(s, "배치 서버", "nginx 1.24.0")["status"] == "denied"

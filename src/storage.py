@@ -113,6 +113,23 @@ def list_items(conn, project_id: str) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def find_item(conn, project_id: str, product: str, version) -> dict | None:
+    """프로젝트에 같은 표준 제품·버전으로 확정된 항목이 있으면 돌려준다(중복 등록 확인용).
+
+    버전은 띄어쓰기·대소문자만 무시하고 표기는 맞추지 않는다("1.24"와 "1.24.0"은 다르다).
+    """
+    for item in list_items(conn, project_id):
+        if item["status"] == "confirmed" and item["product"] == product and _norm(item["version"] or "") == _norm(version or ""):
+            return item
+    return None
+
+
+def find_item_by_text(conn, project_id: str, raw_text: str) -> dict | None:
+    """프로젝트에 입력 문장이 같은 항목이 있으면 돌려준다. 띄어쓰기·대소문자는 무시한다(중복 등록 확인용)."""
+    key = _norm(raw_text)
+    return next((i for i in list_items(conn, project_id) if _norm(i["raw_text"]) == key), None)
+
+
 def list_alerts(conn, project_id: str) -> list[dict]:
     """프로젝트의 알림 이력(보낸 순서대로)."""
     rows = conn.execute("SELECT * FROM alerts WHERE project = ? ORDER BY id", (project_id,)).fetchall()
