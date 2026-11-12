@@ -390,3 +390,44 @@ dialog::backdrop { background: rgba(2, 6, 23, 0.6); }
 .interval-part input { width: 100%; min-height: 44px; padding: 0 var(--space-3); font-family: var(--mono); }
 .interval-part input[aria-invalid="true"] { border-color: var(--danger); }
 .interval-part span { color: var(--muted); white-space: nowrap; }
+
+/* 알림함 */
+.wide-dialog { width: min(920px, calc(100vw - 32px)); }
+.mails-layout { display: grid; grid-template-columns: minmax(220px, 300px) minmax(0, 1fr); gap: var(--space-4); min-height: 360px; }
+.mails-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); max-height: 60vh; overflow-y: auto; }
+.mail-item {
+  width: 100%; text-align: left; display: flex; flex-direction: column; gap: 4px;
+  padding: var(--space-3); min-height: 44px; border-radius: 14px;
+  border: 1px solid var(--border); background: var(--surface-2); box-shadow: 0 2px 0 var(--edge);
+}
+.mail-item:hover { border-color: var(--muted); }
+.mail-item[aria-pressed="true"] { border: 2px solid var(--primary); background: var(--selected-bg); }
+.mail-item-head { display: flex; justify-content: space-between; align-items: center; gap: var(--space-2); }
+.mail-subject { font-weight: 600; overflow-wrap: anywhere; }
+.mail-view { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+.mail-title { margin: 0; font-size: 1rem; overflow-wrap: anywhere; }
+.mail-body { max-height: 50vh; font-size: 0.875rem; }
+@media (max-width: 760px) {
+  .mails-layout { grid-template-columns: 1fr; }
+  .mails-list { max-height: 30vh; }
+}
+
+/* 새 알림 표시와 읽음 현황 */
+.count-badge {
+  min-width: 22px; height: 22px; padding: 0 6px; border-radius: 999px;
+  display: inline-grid; place-items: center;
+  background: var(--danger); color: var(--on-danger); font-size: 0.75rem; font-weight: 700;
+  box-shadow: 0 2px 0 var(--danger-edge);
+}
+.count-badge[hidden] { display: none; }
+.mails-actions { display: inline-flex; align-items: center; gap: var(--space-1); }
+.mail-tags { display: inline-flex; align-items: center; gap: var(--space-1); }
+.new-badge {
+  width: 20px; height: 20px; border-radius: 6px; display: inline-grid; place-items: center;
+  background: var(--danger); color: var(--on-danger); font-size: 0.75rem; font-weight: 800;
+}
+.mail-item.unread { border-left: 5px solid var(--danger); }
+.mail-item.unread .mail-subject { font-weight: 800; }
+.mail-item:not(.unread) .mail-subject { font-weight: 500; color: var(--muted); }
+.readers ul { list-style: none; margin: var(--space-1) 0 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-1); }
+.readers li { display: flex; justify-content: space-between; align-items: center; gap: var(--space-2); font-size: 0.875rem; }

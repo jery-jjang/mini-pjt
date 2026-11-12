@@ -124,6 +124,7 @@ function renderAccounts() {
     state.accountId = select.value;
     saveAccount(state.accountId);
     resetConversation(); // 다른 계정의 질문과 답이 남아 보이지 않게 한다
+    refreshUnread(); // 읽음 현황은 계정마다 따로다
     loadProjects();
     loadSettings();
   });
@@ -204,6 +205,105 @@ function trashIcon() {
     svg.append(path);
   }
   return svg;
+}
+
+// ---------------- 알림함 (DB에 저장된 가짜 발송 메일) ----------------
+
+const MAIL_KIND = { alert: { text: "알림", cls: "tag-danger" }, scan_failure: { text: "조회 실패", cls: "tag-warn" } };
+
+/** 알림함 버튼의 안 읽은 메일 수 배지를 새로 고친다. 읽음 현황은 계정마다 따로다. */
+async function refreshUnread() {
+  const badge = $("mails-badge");
+  try {
+    const { unread_count: n } = await api("/mails");
+    badge.hidden = n === 0;
+    badge.textContent = n > 99 ? "99+" : String(n);
+    $("mails-open").setAttribute("aria-label", n ? `알림함, 안 읽은 메일 ${n}건` : "알림함");
+  } catch (_) {
+    badge.hidden = true;
+  }
+}
+
+async function openMails() {
+  $("mails-scope").textContent = isSecurityAdmin()
+    ? "보안 담당자: 모든 프로젝트의 알림과 조회 실패 통지"
+    : `${currentAccount().name}: 자기 팀 프로젝트의 알림만 보입니다`;
+  $("mail-view").replaceChildren(el("p", { class: "muted", text: "메일을 고르면 본문을 보여 줍니다. 열면 읽음으로 표시됩니다." }));
+  $("mails-list").replaceChildren(el("li", { class: "muted small", text: "불러오는 중" }));
+  if (!$("mails-dialog").open) $("mails-dialog").showModal();
+  await renderMailList();
+}
+
+async function renderMailList(selectedId = null) {
+  try {
+    const { mails, unread_count: unread } = await api("/mails");
+    $("mails-read-all").disabled = unread === 0;
+    if (!mails.length) {
+      $("mails-list").replaceChildren(el("li", { class: "muted small",
+        text: "저장된 알림 메일이 없습니다. 주기 검색이나 '지금 검색 실행해줘'로 알림이 생기면 여기에 쌓입니다." }));
+      return;
+    }
+    $("mails-list").replaceChildren(...mails.map((m) => el("li", {},
+      el("button", {
+        type: "button", class: `mail-item${m.read ? "" : " unread"}`, "data-id": m.id,
+        "aria-pressed": String(m.id === selectedId),
+        "aria-label": `${m.read ? "" : "안 읽음, "}${m.subject}`,
+        onclick: () => showMail(m.id),
+      },
+        el("span", { class: "mail-item-head" },
+          el("span", { class: "mail-tags" },
+            m.read ? null : el("span", { class: "new-badge", "aria-hidden": "true", text: "N" }),
+            el("span", { class: `tag ${(MAIL_KIND[m.kind] || {}).cls || "tag-neutral"}`, text: (MAIL_KIND[m.kind] || {}).text || m.kind })),
+          el("span", { class: "muted small", text: formatTime(m.created_at) })),
+        el("span", { class: "mail-subject", text: m.subject }),
+        m.vuln_ids.length ? el("span", { class: "muted small mono", text: m.vuln_ids.join(", ") }) : null))));
+  } catch (err) {
+    $("mails-list").replaceChildren(el("li", { class: "error-text", text: err.detail }));
+  }
+}
+
+/** 메일을 열면 이 계정 기준으로 읽음 표시하고 본문을 보여 준다. */
+async function showMail(id) {
+  for (const b of $("mails-list").querySelectorAll(".mail-item")) b.setAttribute("aria-pressed", String(b.dataset.id === String(id)));
+  try {
+    const m = await api(`/mails/${id}/read`, { method: "POST" });
+    const item = $("mails-list").querySelector(`.mail-item[data-id="${id}"]`);
+    if (item) {
+      item.classList.remove("unread");
+      item.querySelector(".new-badge")?.remove();
+      item.setAttribute("aria-label", m.subject);
+    }
+    refreshUnread();
+    $("mails-read-all").disabled = !$("mails-list").querySelector(".mail-item.unread");
+    $("mail-view").replaceChildren(...[
+      el("h3", { class: "mail-title", text: m.subject }),
+      el("dl", { class: "settings-grid" },
+        m.recipient ? [el("dt", { text: "받는 사람" }), el("dd", { text: m.recipient })] : [],
+        el("dt", { text: "프로젝트" }), el("dd", { text: m.project || "전체 (보안 담당자)" }),
+        el("dt", { text: "저장 시각" }), el("dd", { text: formatTime(m.created_at) }),
+        el("dt", { text: "내가 읽은 시각" }), el("dd", { text: formatTime(m.read_at) })),
+      m.readers ? el("div", { class: "readers" },
+        el("div", { class: "detail-label", text: "읽음 현황 (계정별)" }),
+        el("ul", {}, m.readers.map((r) => el("li", {},
+          el("span", { text: r.name }),
+          r.read_at
+            ? el("span", { class: "tag tag-ok", text: `읽음 · ${formatTime(r.read_at)}` })
+            : el("span", { class: "tag tag-warn", text: "안 읽음" }))))) : null,
+      el("pre", { class: "code mail-body", text: m.body }),
+    ].filter(Boolean));
+  } catch (err) {
+    $("mail-view").replaceChildren(el("p", { class: "error-text", text: err.detail }));
+  }
+}
+
+async function readAllMails() {
+  $("mails-read-all").disabled = true;
+  try {
+    await api("/mails/read-all", { method: "POST" });
+  } catch (_) { /* 목록을 다시 불러와 상태를 맞춘다 */ }
+  const selected = $("mails-list").querySelector('.mail-item[aria-pressed="true"]');
+  await renderMailList(selected ? Number(selected.dataset.id) : null);
+  refreshUnread();
 }
 
 // ---------------- SW 삭제 (화면에서만, 확인 창을 거쳐 코드가 처리) ----------------
@@ -327,6 +427,7 @@ async function ask(question) {
     state.selected = state.messages.length - 1;
     state.pick = null;
     renderDetail();
+    if (response.tools_called.includes("run_scan_now")) refreshUnread(); // 검색으로 새 알림이 생겼을 수 있다
     if (response.tools_called.includes("confirm_registration") || response.tools_called.includes("propose_candidates")) {
       loadProjects(); // 등록이 바뀌었을 수 있다
     }
@@ -655,13 +756,17 @@ function init() {
   $("inventory-refresh").addEventListener("click", loadProjects);
   $("settings-open").addEventListener("click", openSettings);
   $("settings-close").addEventListener("click", () => $("settings-dialog").close());
+  $("mails-open").addEventListener("click", openMails);
+  $("mails-close").addEventListener("click", () => $("mails-dialog").close());
+  $("mails-read-all").addEventListener("click", readAllMails);
   $("remove-cancel").addEventListener("click", () => { removing = null; $("remove-dialog").close(); });
   $("remove-confirm").addEventListener("click", confirmRemove);
   $("interval-save").addEventListener("click", saveInterval);
 
   loadProjects();
   loadSettings();
-  setInterval(loadSettings, 60_000); // 다음 검색 시각을 1분마다 새로 고친다
+  refreshUnread();
+  setInterval(() => { loadSettings(); refreshUnread(); }, 60_000); // 다음 검색 시각과 새 알림 수를 1분마다 새로 고친다
 }
 
 init();

@@ -19,6 +19,12 @@
       <select id="account-select"></select>
     </div>
 
+    <button type="button" class="scan-status" id="mails-open" aria-haspopup="dialog">
+      <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 6L2 7"/></svg>
+      <span>알림함</span>
+      <span class="count-badge" id="mails-badge" hidden></span>
+    </button>
+
     <button type="button" class="scan-status" id="settings-open" aria-haspopup="dialog">
       <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
       <span id="scan-summary">검색 주기 불러오는 중</span>
@@ -110,6 +116,26 @@
         <button type="button" class="primary" id="interval-save">주기 바꾸기</button>
       </div>
     </form>
+  </dialog>
+
+  <!-- 알림함: DB에 저장된 가짜 발송 메일 -->
+  <dialog id="mails-dialog" class="wide-dialog" aria-labelledby="mails-title">
+    <div class="dialog-body">
+      <div class="panel-head">
+        <h2 id="mails-title">알림함</h2>
+        <span class="mails-actions">
+          <button type="button" class="text-button" id="mails-read-all">모두 읽음</button>
+          <button type="button" class="icon-button" id="mails-close" aria-label="알림함 닫기">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+          </button>
+        </span>
+      </div>
+      <p class="muted small" id="mails-scope"></p>
+      <div class="mails-layout">
+        <ul class="mails-list" id="mails-list" aria-label="메일 목록"></ul>
+        <article class="mail-view" id="mail-view" aria-live="polite"></article>
+      </div>
+    </div>
   </dialog>
 
   <!-- SW 삭제 확인 -->
