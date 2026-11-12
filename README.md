@@ -88,11 +88,44 @@ python -m venv .venv
 
 ```
 .venv\Scripts\python -m uvicorn app:app                    서버 실행 (http://127.0.0.1:8000)
-.venv\Scripts\python -m pytest tests -q                    자동 테스트 87건 (실제 LLM 호출 없음)
+.venv\Scripts\python -m pytest tests -q                    자동 테스트 120건 (실제 LLM 호출 없음)
 .venv\Scripts\python evaluation/run_eval.py --round 1      인-아웃 세트 25건 평가 (실제 Bedrock 호출)
 .venv\Scripts\python evaluation/run_ragas.py --round 1     RAGAS 지표 (설치 방법은 requirements.txt 아래쪽)
 .venv\Scripts\python -m src.scheduler --snapshot T2        검색 1회 실행 (알림 메일은 outbox/에 저장)
 ```
+
+### 설정
+
+`.env`에 적거나 환경 변수로 주면 서버가 뜰 때 읽습니다. 검색 주기는 아래 "검색 주기 바꾸기"처럼 서버를 띄운 채로 바꿀 수 있고, 나머지는 바꾼 뒤 서버를 다시 띄워야 합니다.
+
+| 설정 | 기본값 | 내용 |
+|---|---|---|
+| `VULNWATCH_SCAN_INTERVAL_HOURS` | `6` | 주기 검색 간격의 처음 값(시간). 소수도 됩니다. 예: `1`(1시간), `0.5`(30분), `0.05`(3분). 0 이하나 숫자가 아닌 값이면 서버가 뜨지 않고 이유를 알려 줍니다 |
+| `VULNWATCH_SCHEDULER_ENABLED` | `true` | `false`면 주기 검색을 하지 않습니다. 검색은 대화("지금 검색 실행해줘")나 위의 1회 실행 명령으로만 합니다 |
+| `VULNWATCH_SNAPSHOT` | `T1` | 쓸 취약점 스냅샷 시점(`T1` 또는 `T2`) |
+| `VULNWATCH_ALERT_CVSS_THRESHOLD` | `9.0` | 알림 기준 점수 |
+| `VULNWATCH_FAILURE_NOTICE_THRESHOLD` | `2` | 조회가 몇 회 연속 실패하면 보안 담당자에게 알릴지 |
+
+주기 검색의 첫 실행은 서버가 뜬 시점이 아니라 한 주기가 지난 뒤입니다. 시연에서 알림을 바로 보려면 주기를 짧게 두거나(`0.005`면 약 18초), 대화로 "지금 검색 실행해줘"라고 요청합니다. 주기를 짧게 두면 알림이 생길 때마다 메일 요약에 모델을 부르므로 호출이 늘어납니다. 같은 데이터에서는 중복 알림이 없어 두 번째 주기부터는 호출하지 않습니다.
+
+### 검색 주기 바꾸기 (서버 재시작 없이)
+
+UI에서 쓸 수 있도록 API로 엽니다.
+
+| 요청 | 권한 | 내용 |
+|---|---|---|
+| `GET /settings` | 누구나 | 현재 주기, 주기 검색 사용 여부, 마지막 검색 시각, 다음 검색 시각 |
+| `PUT /settings/scan-interval` 본문 `{"hours": 1}` | 보안 담당자 토큰만 | 주기를 바꾸고 바뀐 상태를 돌려줍니다 |
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8000/settings/scan-interval -Method Put -ContentType "application/json" `
+  -Headers @{ Authorization = "Bearer demo-token-security" } -Body '{"hours": 1}'
+```
+
+- **바로 반영됩니다.** 다음 검색은 바꾼 시각에서 새 주기만큼 뒤입니다. 예: 6시간 주기로 2시간이 지난 때 1시간으로 바꾸면 지금부터 1시간 뒤에 검색합니다.
+- **유지됩니다.** 바꾼 주기는 DB에 저장되어 서버를 다시 띄워도 그 값을 씁니다. `.env` 값은 저장된 주기가 없을 때만 씁니다.
+- **0 이하나 숫자가 아닌 값은 422**로 거부하고 주기를 바꾸지 않습니다. 팀원 토큰이나 토큰 없이 요청하면 403, 모르는 토큰은 401입니다.
+- 주기는 모든 팀의 프로젝트에 한꺼번에 적용되어 보안 담당자만 바꿀 수 있게 했습니다.
 
 질문 보내기. 가장 쉬운 방법은 브라우저에서 `http://127.0.0.1:8000/docs`를 열어 `POST /query`를 실행하는 것입니다. PowerShell에서는 아래처럼 보냅니다.
 
@@ -198,6 +231,6 @@ Windows에서 `curl -d "{...한글...}"`처럼 한글 질문을 명령줄에 직
 - `src/retriever.py:48` — RAG 파이프라인(`VulnRetriever`)
 - `src/matching.py:35` — 해당 여부 판정(`is_affected`), `src/matching.py:99` — 알림 판정(`alert_reason`)
 - `src/auth.py:23` — 다른 팀 접근 차단(`can_access`)
-- `src/scheduler.py:19` — 검색 1회 실행(`run_once`), `src/notifier.py:70` — 알림 메일 저장
-- `app.py:49` — `POST /query`
+- `src/scheduler.py:22` — 검색 1회 실행(`run_once`), `src/scheduler.py:93` — 주기 검색(`Scheduler`, 재시작 없이 주기 변경), `src/notifier.py:70` — 알림 메일 저장
+- `app.py:89` — `POST /query`, `app.py:96` — 설정 조회와 검색 주기 변경 API
 - `evaluation/run_eval.py`, `evaluation/run_ragas.py` — 평가 스크립트
