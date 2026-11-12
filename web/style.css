@@ -12,6 +12,7 @@
   --ok: #4ade80;
   --warn: #fbbf24;
   --danger: #f87171;
+  --on-danger: #0f172a;
   --ok-bg: rgba(74, 222, 128, 0.14);
   --warn-bg: rgba(251, 191, 36, 0.14);
   --danger-bg: rgba(248, 113, 113, 0.14);
@@ -39,6 +40,7 @@
     --ok: #15803d;
     --warn: #a16207;
     --danger: #b91c1c;
+    --on-danger: #ffffff;
     --ok-bg: #dcfce7;
     --warn-bg: #fef3c7;
     --danger-bg: #fee2e2;
@@ -324,3 +326,14 @@ dialog::backdrop { background: rgba(2, 6, 23, 0.6); }
 .doc-desc p { margin: var(--space-1) 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .pick-select { min-height: 44px; width: 100%; padding: 0 var(--space-3); font-family: var(--mono); font-size: 0.875rem; }
 .contexts { display: flex; flex-direction: column; gap: var(--space-3); }
+
+/* SW 삭제 */
+.item-side { display: inline-flex; align-items: center; gap: var(--space-1); flex: none; }
+.remove-button { color: var(--muted); }
+.remove-button:hover { color: var(--danger); background: var(--danger-bg); }
+.danger {
+  min-height: 44px; padding: 0 var(--space-4); border-radius: var(--radius);
+  background: var(--danger); color: var(--on-danger); border: 1px solid transparent; font-weight: 600;
+  transition: filter 150ms ease;
+}
+.danger:hover:not(:disabled) { filter: brightness(1.08); }

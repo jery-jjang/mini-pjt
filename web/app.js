@@ -167,11 +167,66 @@ function renderProject(project) {
       el("div", { class: "item-main" },
         el("span", { class: "item-name", text: item.product || item.raw_text }),
         item.version && item.product ? el("span", { class: "item-version", text: item.version }) : null),
-      item.monitored
-        ? el("span", { class: "tag tag-ok", text: "감시 중" })
-        : el("span", { class: "tag tag-warn", text: "감시 불가" }))));
+      el("div", { class: "item-side" },
+        item.monitored
+          ? el("span", { class: "tag tag-ok", text: "감시 중" })
+          : el("span", { class: "tag tag-warn", text: "감시 불가" }),
+        el("button", {
+          type: "button", class: "icon-button remove-button",
+          "aria-label": `${itemLabel(item)} 삭제`, title: "삭제",
+          onclick: () => openRemove(project, item),
+        }, trashIcon())))));
   if (!project.items.length) items.append(el("li", { class: "muted small", text: "등록된 항목이 없습니다." }));
   return el("details", { class: "project", open: true }, summary, items);
+}
+
+function itemLabel(item) {
+  return item.product ? `${item.product} ${item.version || ""}`.trim() : item.raw_text;
+}
+
+function trashIcon() {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("class", "icon");
+  svg.setAttribute("aria-hidden", "true");
+  for (const d of ["M3 6h18", "M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2", "M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6", "M10 11v6", "M14 11v6"]) {
+    const path = document.createElementNS(ns, "path");
+    path.setAttribute("d", d);
+    svg.append(path);
+  }
+  return svg;
+}
+
+// ---------------- SW 삭제 (화면에서만, 확인 창을 거쳐 코드가 처리) ----------------
+
+let removing = null; // 확인 창에 띄운 {project, item}
+
+function openRemove(project, item) {
+  removing = { project, item };
+  $("remove-project").textContent = project.name;
+  $("remove-item").textContent = itemLabel(item);
+  $("remove-state").textContent = item.monitored ? "감시 중" : "감시 불가";
+  $("remove-error").textContent = "";
+  $("remove-confirm").disabled = false;
+  $("remove-dialog").showModal();
+  $("remove-cancel").focus(); // 실수로 Enter를 눌러도 지워지지 않게 취소에 먼저 초점을 둔다
+}
+
+async function confirmRemove() {
+  if (!removing) return;
+  const { project, item } = removing;
+  $("remove-confirm").disabled = true;
+  try {
+    await api(`/projects/${encodeURIComponent(project.id)}/items/${item.id}`, { method: "DELETE" });
+    $("remove-dialog").close();
+    removing = null;
+    await loadProjects();
+  } catch (err) {
+    $("remove-error").textContent = err.detail;
+    $("remove-confirm").disabled = false;
+    if (err.status === 404) loadProjects(); // 이미 지워졌으면 목록을 새로 고친다
+  }
 }
 
 function chevron() {
@@ -570,6 +625,8 @@ function init() {
   $("inventory-refresh").addEventListener("click", loadProjects);
   $("settings-open").addEventListener("click", openSettings);
   $("settings-close").addEventListener("click", () => $("settings-dialog").close());
+  $("remove-cancel").addEventListener("click", () => { removing = null; $("remove-dialog").close(); });
+  $("remove-confirm").addEventListener("click", confirmRemove);
   $("interval-save").addEventListener("click", saveInterval);
 
   loadProjects();

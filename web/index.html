@@ -101,6 +101,24 @@
     </form>
   </dialog>
 
+  <!-- SW 삭제 확인 -->
+  <dialog id="remove-dialog" aria-labelledby="remove-title" aria-describedby="remove-desc">
+    <form method="dialog" class="dialog-body" novalidate>
+      <h2 id="remove-title">등록한 SW 삭제</h2>
+      <dl class="settings-grid">
+        <dt>프로젝트</dt><dd id="remove-project">-</dd>
+        <dt>SW</dt><dd id="remove-item">-</dd>
+        <dt>상태</dt><dd id="remove-state">-</dd>
+      </dl>
+      <p class="small muted" id="remove-desc">지우면 감시와 알림에서 빠집니다. 지금까지의 알림 이력과 삭제 기록은 남고, 같은 SW를 다시 등록하면 알림 조건에 따라 다시 알립니다.</p>
+      <p class="error-text" id="remove-error" role="alert"></p>
+      <div class="dialog-actions">
+        <button type="button" class="secondary" id="remove-cancel">취소</button>
+        <button type="button" class="danger" id="remove-confirm">삭제</button>
+      </div>
+    </form>
+  </dialog>
+
   <script src="app.js"></script>
 </body>
 </html>
