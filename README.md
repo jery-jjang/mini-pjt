@@ -12,19 +12,20 @@
 
 | # | 패턴 | Day | 어떻게 활용했나 |
 |---|---|---|---|
-| 1 | LCEL chain (Pydantic 구조화 출력) | Day 1 | `프롬프트 \| 모델.with_structured_output(...)` 체인 세 곳: 등록 문장의 식별자 후보 제시(`src/tools.py`), 알림 메일의 취약점 요약(`src/notifier.py`), 평가의 LLM 채점(`evaluation/run_eval.py`) |
+| 1 | LCEL chain (Pydantic 구조화 출력) | Day 1 | `프롬프트 \| 모델.with_structured_output(...)` 체인 네 곳: 등록 문장의 식별자 후보 제시(`src/tools.py`), 문서 검색의 쿼리 확장(`src/retriever.py`), 알림 메일의 취약점 요약(`src/notifier.py`), 평가의 LLM 채점(`evaluation/run_eval.py`) |
 | 2 | ReAct (도구 자율 선택) | Day 3 | `create_agent`에 도구 7개를 붙여 모델이 질문에 맞는 도구를 고른다(`src/agent.py`) |
 | 3 | RAG (하이브리드 검색·쿼리 확장) | Day 2 | 취약점 레코드 20건(점수, KEV 여부, 영향 버전 범위, 설명문)을 검색해 답의 근거로 쓰고 `contexts`에 싣는다. ① 질문의 CVE·GHSA ID는 정확 일치로 먼저 찾고, ② 한글 검색어는 모델이 영어 키워드로 넓히고(구조화 출력), ③ BM25 키워드 검색과 Titan 임베딩 의미 검색의 순위를 RRF로 합친다. 의미 검색은 유사도 0.2 미만을 버려 무관한 질문에는 문서를 내놓지 않는다(`src/retriever.py`). 리랭킹은 하지 않았다 |
 | 4 | 도구 다중 | Day 4 | SQLite(등록·현황), 버전 판정 코드, 문서 검색, 검색 실행을 각각 도구로 만들었다(`src/tools.py`). "사내 포털의 Nginx 취약점 중 mp4 모듈 관련 건을 설명해줘"(28번)처럼 해당 여부 조회와 문서 검색을 한 질의에서 함께 쓴다. 다만 2차 평가에서 도구를 2개 이상 쓴 질의는 이 1건이고, 외부 API 도구는 없다 |
 | 6 | 가드레일 | Day 5 | 다른 팀 데이터 차단과 '근거 없음' 판정은 코드가 한다. 공격 방법·지시 조작·무관한 질문은 모델이 거절 도구를 불러 기록한다. 모델에 보내는 글에서는 프로젝트명과 팀명을 가린다 |
+| 8 | 미들웨어 | Day 5 | `create_agent`에 미들웨어 두 개를 붙였다(`src/agent.py`). ① 재시도: Bedrock이 다시 시도할 만한 오류(모델이 도구 호출 형식을 잘못 만든 `ModelErrorException`, 일시적인 서버 오류)를 내면 잠시 기다렸다가 최대 2번 다시 부른다. temperature 0에서는 같은 잘못된 호출이 되풀이돼 기본 `ModelRetryMiddleware`로는 풀리지 않아, 다시 부를 때만 temperature를 0.7로 올린다. 하루 한도 초과는 다시 불러도 소용없어 재시도하지 않는다. 늘 오류가 나던 7번 문항이 5번 중 4번 통과하게 됐다. ② 이름 가리기 안전망: 모델에 보내는 메시지 전체를 한 번 더 가려, 도구 하나가 가리기를 빠뜨려도 모델에는 가린 글만 간다 |
 | 11 | Observability · Trace | Day 7 | LangSmith에 요청마다 `vulnwatch-query` 실행으로 모델 호출과 도구 호출을 남긴다(알림 요약은 `vulnwatch-alert-summary`). 같은 `run_id`로 응답의 `trace`와 로컬 파일 `var/traces.jsonl`에도 남겨 둘을 잇는다. 모델에 보내기 전에 프로젝트명·팀명을 가리므로 LangSmith에도 가린 글만 남는다(`src/agent.py`) |
-| 12 | 평가 (RAGAS · LLM-as-Judge) | Day 7 | 인-아웃 세트 25건을 코드 채점(해당 여부 문항은 ID 정확 일치)과 LLM 채점으로 평가하고(`evaluation/run_eval.py`), RAGAS 네 지표를 낸다(`evaluation/run_ragas.py`) |
+| 12 | 평가 (RAGAS · LLM-as-Judge) | Day 7 | 인-아웃 세트 30건을 코드 채점(해당 여부 문항은 ID 정확 일치)과 LLM 채점으로 평가하고(`evaluation/run_eval.py`), RAGAS 네 지표를 낸다(`evaluation/run_ragas.py`) |
 
 쓰지 않은 패턴과 이유:
 
 - **5 MCP, 9 Multi-Agent, 10 Plan-Execute·장기 메모리**: 질문 하나에 도구 한두 개로 끝나는 작업이라 필요하지 않았습니다.
 - **7 HITL**: LangGraph의 `interrupt()`는 쓰지 않았습니다. 대신 등록은 "후보 제시 → 사람이 번호로 확정"의 두 번 요청으로 나눠, 사람이 확정하기 전에는 반영되지 않게 했습니다.
-- **8 미들웨어**: 이름 가리기를 `AgentMiddleware`가 아니라 직접 만든 코드(`Masker`)로 처리했습니다.
+- **8 미들웨어 중 이름 가리기 자체**: 질문과 도구 결과를 가리는 일은 미들웨어로 옮기지 않았습니다. 미들웨어는 에이전트와 도구 실행 안쪽에서 돌아서, 거기서 가리면 LangSmith에 기록되는 에이전트 입력과 도구 출력에는 가리기 전 이름이 남기 때문입니다. 그래서 질문은 에이전트 실행 전에, 도구 결과는 도구 안에서 가리고, 미들웨어는 모델 앞의 안전망으로만 씁니다. 대화 요약 미들웨어는 요청마다 대화가 새로 시작돼 요약할 이력이 없어 쓰지 않았습니다.
 
 LangSmith 추적은 `.env`의 `LANGSMITH_TRACING=true`, `LANGSMITH_API_KEY`, `LANGSMITH_PROJECT`로 켭니다. 실제 질문 하나의 LangSmith 기록을 읽어, 프로젝트명·팀명·수신 주소·토큰이 0번 나오고 `[프로젝트2]`, `[팀1]` 같은 가린 표시만 남는 것을 확인했습니다. 자동 테스트는 추적을 끄고 돌아 외부로 아무것도 보내지 않습니다.
 
@@ -105,7 +106,7 @@ VULNWATCH_REGION=us-east-1
 
 ```
 .venv\Scripts\python -m uvicorn app:app                    서버 실행 (http://127.0.0.1:8000)
-.venv\Scripts\python -m pytest tests -q                    자동 테스트 139건 (실제 LLM 호출 없음)
+.venv\Scripts\python -m pytest tests -q                    자동 테스트 143건 (실제 LLM 호출 없음)
 .venv\Scripts\python evaluation/run_eval.py --round 1      인-아웃 세트 25건 평가 (실제 Bedrock 호출)
 .venv\Scripts\python evaluation/run_ragas.py --round 1     RAGAS 지표 (설치 방법은 requirements.txt 아래쪽)
 .venv\Scripts\python -m src.scheduler --snapshot T2        검색 1회 실행 (알림 메일은 outbox/에 저장)
@@ -263,8 +264,9 @@ Windows에서 `curl -d "{...한글...}"`처럼 한글 질문을 명령줄에 직
 
 ## 핵심 코드 위치
 
-- `src/agent.py:138` — 메인 에이전트(`answer_question`): 이름 가리기, `create_agent`, LangSmith 추적, 라벨 결정
-- `src/agent.py:20` — 시스템 프롬프트
+- `src/agent.py:211` — 메인 에이전트(`answer_question`): 이름 가리기, `create_agent`, LangSmith 추적, 라벨 결정
+- `src/agent.py:106` — 미들웨어: 이름 가리기 안전망(`MaskingMiddleware`), 재시도(`RetryMiddleware`)
+- `src/agent.py:23` — 시스템 프롬프트
 - `src/tools.py:416` — 에이전트용 도구 7개(`build_tools`)
 - `src/tools.py:236` — 해당 여부 조회 도구(`check_vulnerabilities`), `src/tools.py:347` — 문서 검색 도구(`search_vuln_docs`)
 - `src/retriever.py:134` — RAG 파이프라인(`VulnRetriever`: ID 일치, 쿼리 확장, BM25·벡터 하이브리드)

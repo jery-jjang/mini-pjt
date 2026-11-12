@@ -18,6 +18,7 @@
 - API 서버는 FastAPI, 저장소는 SQLite, 테스트는 pytest
 - 문서 검색은 하이브리드다: ID 정확 일치, LLM 쿼리 확장(한글 검색어 → 영어 키워드, 구조화 출력), `rank-bm25` 키워드 검색과 Bedrock Titan 임베딩(`amazon.titan-embed-text-v2:0`, `VULNWATCH_EMBED_MODEL_ID`) 의미 검색을 RRF로 합친다. 의미 검색은 유사도 0.2 미만을 버린다. 문서 임베딩은 `var/doc_embeddings.json`에 캐시한다
 - 쿼리 확장이나 임베딩이 실패하면 키워드 검색만으로 계속한다. 테스트는 가짜 모델·가짜 임베딩을 넣어 외부를 호출하지 않는다
+- 에이전트 미들웨어는 두 개다: 재시도(`ModelErrorException`과 일시적 서버 오류만 최대 2번, 다시 부를 때 temperature 0.7, 한도 초과는 재시도하지 않음)와 모델 앞 이름 가리기 안전망. 질문과 도구 결과를 가리는 일은 LangSmith 기록 때문에 미들웨어로 옮기지 않는다
 - 추적(트레이스)은 LangSmith와 로컬 기록 두 곳에 남긴다. LangSmith는 `.env`의 `LANGSMITH_TRACING=true`일 때 켜지고, 요청마다 `vulnwatch-query` 실행으로 남는다. 같은 `run_id`를 응답의 `trace`가 담긴 로컬 기록 `var/traces.jsonl`에도 적어 둘을 잇는다
 - LangSmith로 가는 것은 모델 입력과 출력, 도구 입력과 출력뿐이고 모두 프로젝트명·팀명을 가린 글이다. 메타데이터에는 역할만 넣고 계정·팀·프로젝트 이름을 넣지 않는다
 - `tests/`는 `conftest.py`에서 `LANGSMITH_TRACING=false`로 고정해 외부로 아무것도 보내지 않는다

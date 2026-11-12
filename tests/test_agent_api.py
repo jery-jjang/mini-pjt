@@ -84,6 +84,78 @@ def test_모델이_대괄호를_빼고_써도_프로젝트를_찾는다(conn):
     assert res["answer"] == "사내 포털 현황입니다."
 
 
+def test_도구가_가리기를_빠뜨려도_미들웨어가_모델에는_가린_글만_보낸다(conn, monkeypatch):
+    from src import tools
+
+    # 도구 결과를 가리지 않고 그대로 돌려주는 실수를 흉내 낸다
+    outputs = []
+
+    def leaky_record(session, name, args, result):
+        outputs.append(json.dumps(result, ensure_ascii=False))
+        return outputs[-1]
+
+    monkeypatch.setattr(tools, "_record", leaky_record)
+    llm = scripted(call("get_project_status", project="[프로젝트2]"), AIMessage(content="현황입니다."))
+    ask(conn, "결제 API 현황 보여줘", llm)
+    assert "결제 API" in outputs[0]  # 도구 결과에는 실제 이름이 있었지만
+    sent = "\n".join(llm.seen)
+    assert "[프로젝트2]" in sent and "결제 API" not in sent  # 모델에는 가린 글만 갔다
+
+
+class FlakyModel(BaseChatModel):
+    """처음 몇 번은 Bedrock 오류를 내고 그다음에는 정해 둔 답을 내는 가짜 모델."""
+
+    code: str
+    failures: int
+    log: list  # 호출 기록. 재시도 때 모델을 복사해도 같은 목록을 함께 쓴다
+    temperature: float | None = None
+
+    @property
+    def calls(self) -> int:
+        return len(self.log)
+
+    @property
+    def _llm_type(self) -> str:
+        return "flaky"
+
+    def bind_tools(self, tools, **kwargs):
+        return self
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        from botocore.exceptions import ClientError
+
+        self.log.append(self.temperature)
+        if self.calls <= self.failures:
+            raise ClientError({"Error": {"Code": self.code, "Message": "invalid sequence as part of ToolUse"}}, "Converse")
+        return ChatResult(generations=[ChatGeneration(message=AIMessage(content="CVE-2099-12345는 확인할 수 없습니다."))])
+
+
+@pytest.fixture
+def no_wait(monkeypatch):
+    """재시도 사이의 대기를 없앤다."""
+    monkeypatch.setattr(agent.time, "sleep", lambda _s: None)
+
+
+def test_모델_형식_오류는_temperature를_올려_다시_불러_답한다(conn, no_wait):
+    llm = FlakyModel(code="ModelErrorException", failures=2, log=[], temperature=0.0)
+    res = ask(conn, "CVE-2099-12345가 우리 프로젝트에 해당해?", llm)
+    assert "확인할 수 없습니다" in res["answer"]
+    assert llm.log == [0.0, 0.7, 0.7]  # 처음은 0, 다시 부를 때만 올린다
+
+
+@pytest.mark.parametrize("code, failures, calls", [
+    ("ModelErrorException", 3, 3),   # 두 번 다시 불러도 실패하면 오류를 그대로 낸다(API는 503)
+    ("ThrottlingException", 1, 1),   # 한도 초과는 다시 부르지 않는다(API는 429)
+])
+def test_재시도_한도와_대상(conn, no_wait, code, failures, calls):
+    from botocore.exceptions import ClientError
+
+    llm = FlakyModel(code=code, failures=failures, log=[])
+    with pytest.raises(ClientError):
+        ask(conn, "CVE-2099-12345가 우리 프로젝트에 해당해?", llm)
+    assert llm.calls == calls
+
+
 def test_답에_나오지_않은_취약점_문서는_근거에서_뺀다(conn):
     llm = scripted(call("get_project_status", project="[프로젝트3]"),
                    AIMessage(content="감시 불가 항목: 사내 공통 로깅 모듈 2.1"))

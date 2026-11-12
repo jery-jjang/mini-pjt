@@ -7,10 +7,13 @@
 
 import json
 import re
+import time
 import uuid
 from datetime import datetime, timezone
 
+from botocore.exceptions import ClientError
 from langchain.agents import create_agent
+from langchain.agents.middleware import AgentMiddleware
 
 from src import sources, storage
 from src.config import get_settings
@@ -100,6 +103,76 @@ class Masker:
         return text
 
 
+class MaskingMiddleware(AgentMiddleware):
+    """모델을 부르기 직전에 보낼 메시지 전체를 한 번 더 가리는 안전망.
+
+    질문은 에이전트 실행 전에, 도구 결과는 도구 안에서 이미 가린다(LangSmith 기록에도 가린 글만 남기려면
+    그 자리에서 가려야 한다). 이 미들웨어는 어느 한 곳이 가리기를 빠뜨려도 모델에는 가린 글만 가게 한다.
+    이미 가린 글은 바뀌지 않는다.
+    """
+
+    def __init__(self, mask):
+        super().__init__()
+        self.mask = mask
+
+    def _mask_content(self, content):
+        """메시지 본문(문자열 또는 블록 목록)의 글자를 가린다."""
+        if isinstance(content, str):
+            return self.mask(content)
+        return [b | {"text": self.mask(b["text"])} if isinstance(b, dict) and isinstance(b.get("text"), str) else b
+                for b in content]
+
+    def wrap_model_call(self, request, handler):
+        """모델에 보내는 메시지를 가린 뒤 모델을 부른다."""
+        messages = [m.model_copy(update={"content": self._mask_content(m.content)}) for m in request.messages]
+        return handler(request.override(messages=messages))
+
+
+# 다시 불러 볼 만한 Bedrock 오류: 모델이 도구 호출 형식을 잘못 만든 경우와 일시적인 서버 오류.
+# 하루 한도 초과(Throttling)는 다시 불러도 소용없으므로 넣지 않는다(app.py가 429로 알린다).
+RETRY_CODES = {"ModelErrorException", "ServiceUnavailableException", "InternalServerException",
+               "ModelNotReadyException"}
+
+
+def is_retryable(exc: Exception) -> bool:
+    """모델 호출 오류를 다시 시도할지 정한다."""
+    return isinstance(exc, ClientError) and exc.response.get("Error", {}).get("Code", "") in RETRY_CODES
+
+
+class RetryMiddleware(AgentMiddleware):
+    """다시 시도할 만한 모델 오류가 나면 잠시 기다렸다가 다시 부른다.
+
+    temperature 0에서는 같은 요청에 같은 잘못된 도구 호출이 되풀이되므로(Nova Pro 7번 문항),
+    다시 부를 때만 temperature를 retry_temperature로 올린다. 끝까지 실패하면 오류를 그대로 내고
+    app.py가 503으로 알린다.
+    """
+
+    def __init__(self, max_retries: int = 2, retry_temperature: float = 0.7, initial_delay: float = 1.0):
+        super().__init__()
+        self.max_retries = max_retries
+        self.retry_temperature = retry_temperature
+        self.initial_delay = initial_delay
+
+    def wrap_model_call(self, request, handler):
+        """모델을 부르고, 다시 시도할 만한 오류면 temperature를 올려 다시 부른다."""
+        for attempt in range(self.max_retries + 1):
+            try:
+                return handler(request)
+            except Exception as exc:
+                if not is_retryable(exc) or attempt == self.max_retries:
+                    raise
+                time.sleep(self.initial_delay * (2 ** attempt))
+                if hasattr(request.model, "temperature"):
+                    model = request.model.model_copy(update={"temperature": self.retry_temperature})
+                    request = request.override(model=model)
+        raise AssertionError("도달하지 않는다")
+
+
+def build_middleware(mask) -> list:
+    """에이전트에 붙일 미들웨어. 앞의 것이 바깥쪽에서 돈다: 재시도 → 가리기 → 모델 호출."""
+    return [RetryMiddleware(), MaskingMiddleware(mask)]
+
+
 def make_llm(max_tokens: int = 2000):
     """Bedrock의 Claude 모델을 만든다. 자격 증명은 환경 변수(.env)에서 읽는다."""
     from langchain_aws import ChatBedrockConverse
@@ -154,7 +227,8 @@ def answer_question(conn, account: dict, question: str, llm=None, embedder=None,
     session.trace.append({"step": "mask_question", "input": question, "output": masked})
 
     agent = create_agent(llm, build_tools(session),
-                         system_prompt=SYSTEM_PROMPT.format(role=ROLE_TEXT[account["role"]]))
+                         system_prompt=SYSTEM_PROMPT.format(role=ROLE_TEXT[account["role"]]),
+                         middleware=build_middleware(masker.mask))
     # LangSmith 추적을 켜면 이 실행이 run_id로 남는다. 로컬 기록에도 같은 ID를 남겨 둘을 잇는다.
     # 메타데이터에는 역할만 넣고 계정·팀·프로젝트 이름은 넣지 않는다.
     run_id = uuid.uuid4()
