@@ -106,10 +106,11 @@ VULNWATCH_REGION=us-east-1
 
 ```
 .venv\Scripts\python -m uvicorn app:app                    서버 실행. 화면은 http://127.0.0.1:8000/ui/
-.venv\Scripts\python -m pytest tests -q                    자동 테스트 158건 (실제 LLM 호출 없음)
+.venv\Scripts\python -m pytest tests -q                    자동 테스트 159건 (실제 LLM 호출 없음)
 .venv\Scripts\python evaluation/run_eval.py --round 1      인-아웃 세트 25건 평가 (실제 Bedrock 호출)
 .venv\Scripts\python evaluation/run_ragas.py --round 1     RAGAS 지표 (설치 방법은 requirements.txt 아래쪽)
 .venv\Scripts\python -m src.scheduler --snapshot T2        검색 1회 실행 (알림 메일은 outbox/에 저장)
+.venv\Scripts\python -m src.storage --load-demo            로컬 DB에 시연용 등록 항목 19개 추가 (프로젝트마다 8~10개가 된다)
 ```
 
 ### 설정

@@ -268,3 +268,49 @@ def _raw_key(raw_text: str) -> str:
     """매핑 키. 버전 숫자를 뺀 제품 이름 부분만 쓴다."""
     words = [w for w in str(raw_text).split() if not w[0].isdigit()]
     return _norm(" ".join(words))
+
+
+# ---------------- 로컬 시연 데이터 ----------------
+
+def load_demo(conn, demo_path) -> dict:
+    """시연용 추가 등록 항목(data/demo_items.json)을 넣는다. 평가 시드와 별개로 로컬 DB에만 쓴다.
+
+    없는 제품은 제품 목록에 더하고, 이미 있는 항목(같은 제품·버전 또는 같은 입력 문장)은 건너뛴다.
+    여러 번 돌려도 같은 결과가 된다. {added, skipped, products_added}를 돌려준다.
+    """
+    demo = json.loads(Path(demo_path).read_text(encoding="utf-8"))
+    report = {"added": 0, "skipped": 0, "products_added": 0}
+    for p in demo["products"]:
+        cur = conn.execute("INSERT OR IGNORE INTO products VALUES (?, ?, ?, ?)",
+                           (p["key"], p["name"], p["identifier"], json.dumps(p["aliases"], ensure_ascii=False)))
+        report["products_added"] += cur.rowcount
+    for item in demo["items"]:
+        exists = find_item_by_text(conn, item["project"], item["raw_text"]) or (
+            find_item(conn, item["project"], item["product"], item["version"]) if item["product"] else None)
+        if exists:
+            report["skipped"] += 1
+            continue
+        add_item(conn, item["project"], item["raw_text"], item["product"], item["version"], item["status"])
+        if item["status"] == "confirmed":
+            save_mapping(conn, item["raw_text"], item["product"])
+        report["added"] += 1
+    conn.commit()
+    return report
+
+
+if __name__ == "__main__":
+    import argparse
+
+    from src.config import get_settings
+
+    parser = argparse.ArgumentParser(description="로컬 시연 DB 관리")
+    parser.add_argument("--load-demo", action="store_true", help="data/demo_items.json의 시연용 등록 항목을 넣는다")
+    args = parser.parse_args()
+    if args.load_demo:
+        settings = get_settings()
+        db = connect(settings.db_path)
+        if not list_projects(db):
+            reset_from_seed(db, settings.data_dir / "seed.json")
+        print(load_demo(db, settings.data_dir / "demo_items.json"))
+    else:
+        parser.print_help()

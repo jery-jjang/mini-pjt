@@ -33,6 +33,7 @@ python -m venv .venv                      가상환경 만들기 (처음 한 번
 .venv\Scripts\python evaluation/run_eval.py --round 1    30건 평가 (실제 Bedrock 호출)
 .venv\Scripts\python evaluation/run_ragas.py --round 1   RAGAS 지표 (run_eval 뒤에 실행. 설치 방법은 requirements.txt 아래쪽)
 .venv\Scripts\python -m src.scheduler --snapshot T2      검색 1회 실행 (시연용)
+.venv\Scripts\python -m src.storage --load-demo          로컬 DB에 시연용 등록 항목 추가 (평가 뒤 다시 실행)
 ```
 
 ## 폴더 구조 (제출 규약. 바꾸지 않는다)
@@ -54,7 +55,7 @@ src/sources.py        취약점 정보원 (오프라인 스냅샷)
 src/auth.py           로그인, 토큰, 팀·역할 확인
 src/storage.py        SQLite 접근
 src/config.py         설정값 (환경 변수에서 읽고 기본값을 둔다)
-data/                 취약점 스냅샷(1차·2차 시점), 초기 시드 데이터
+data/                 취약점 스냅샷(1차·2차 시점), 초기 시드 데이터, 시연용 추가 등록 항목(demo_items.json. 평가 시드와 별개로 로컬 DB에만 넣는다. 사용자 요청으로 2026-11-12에 더함)
 evaluation/           test_queries.csv, 채점 스크립트 run_eval.py, RAGAS 스크립트 run_ragas.py, round1_report.md, round2_report.md
 tests/                pytest (가짜 모델 주입, 실제 LLM 호출 없음)
 var/                  실행 중 만들어지는 SQLite 파일과 traces.jsonl (커밋하지 않는다)

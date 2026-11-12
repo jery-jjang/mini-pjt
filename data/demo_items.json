@@ -1,0 +1,36 @@
+{
+  "_notice": "교육용 더미 데이터입니다. 로컬 시연 DB(var/vulnwatch.db)에만 넣는 추가 등록 항목이며, 평가에 쓰는 초기 시드(seed.json)와 별개입니다. 넣기: python -m src.storage --load-demo",
+  "products": [
+    {"key": "postgresql", "name": "PostgreSQL", "identifier": "cpe:2.3:a:postgresql:postgresql", "aliases": ["postgresql", "postgres", "포스트그레스"]},
+    {"key": "redis", "name": "Redis", "identifier": "cpe:2.3:a:redis:redis", "aliases": ["redis", "레디스"]},
+    {"key": "jackson_databind", "name": "Jackson Databind", "identifier": "cpe:2.3:a:fasterxml:jackson-databind", "aliases": ["jackson", "jackson databind", "잭슨"]},
+    {"key": "nodejs", "name": "Node.js", "identifier": "cpe:2.3:a:nodejs:node.js", "aliases": ["node", "nodejs", "node.js", "노드"]},
+    {"key": "react", "name": "React", "identifier": "cpe:2.3:a:facebook:react", "aliases": ["react", "리액트"]},
+    {"key": "keycloak", "name": "Keycloak", "identifier": "cpe:2.3:a:redhat:keycloak", "aliases": ["keycloak", "키클록"]},
+    {"key": "python", "name": "Python", "identifier": "cpe:2.3:a:python:python", "aliases": ["python", "파이썬"]},
+    {"key": "airflow", "name": "Apache Airflow", "identifier": "cpe:2.3:a:apache:airflow", "aliases": ["airflow", "에어플로우"]}
+  ],
+  "items": [
+    {"project": "pay-api", "raw_text": "Spring Framework 6.0.13", "product": "spring_framework", "version": "6.0.13", "status": "confirmed"},
+    {"project": "pay-api", "raw_text": "OpenSSL 3.0.13", "product": "openssl", "version": "3.0.13", "status": "confirmed"},
+    {"project": "pay-api", "raw_text": "Ubuntu 20.04", "product": "ubuntu", "version": "20.04", "status": "confirmed"},
+    {"project": "pay-api", "raw_text": "PostgreSQL 15.4", "product": "postgresql", "version": "15.4", "status": "confirmed"},
+    {"project": "pay-api", "raw_text": "Redis 7.2.4", "product": "redis", "version": "7.2.4", "status": "confirmed"},
+    {"project": "pay-api", "raw_text": "Jackson Databind 2.13.0", "product": "jackson_databind", "version": "2.13.0", "status": "confirmed"},
+    {"project": "pay-api", "raw_text": "사내 결제 SDK 2.3", "product": null, "version": "2.3", "status": "unconfirmed"},
+
+    {"project": "portal", "raw_text": "Tomcat 10.1.5", "product": "tomcat", "version": "10.1.5", "status": "confirmed"},
+    {"project": "portal", "raw_text": "Ubuntu 24.04", "product": "ubuntu", "version": "24.04", "status": "confirmed"},
+    {"project": "portal", "raw_text": "Node.js 18.17.1", "product": "nodejs", "version": "18.17.1", "status": "confirmed"},
+    {"project": "portal", "raw_text": "React 18.2.0", "product": "react", "version": "18.2.0", "status": "confirmed"},
+    {"project": "portal", "raw_text": "Keycloak 21.1.2", "product": "keycloak", "version": "21.1.2", "status": "confirmed"},
+    {"project": "portal", "raw_text": "사내 SSO 연동 모듈 1.4", "product": null, "version": "1.4", "status": "unconfirmed"},
+
+    {"project": "batch", "raw_text": "Log4j 2.12.1", "product": "log4j", "version": "2.12.1", "status": "confirmed"},
+    {"project": "batch", "raw_text": "NGINX 1.26.0", "product": "nginx", "version": "1.26.0", "status": "confirmed"},
+    {"project": "batch", "raw_text": "Python 3.10.12", "product": "python", "version": "3.10.12", "status": "confirmed"},
+    {"project": "batch", "raw_text": "Apache Airflow 2.7.3", "product": "airflow", "version": "2.7.3", "status": "confirmed"},
+    {"project": "batch", "raw_text": "PostgreSQL 14.9", "product": "postgresql", "version": "14.9", "status": "confirmed"},
+    {"project": "batch", "raw_text": "사내 정산 배치 엔진 5.0", "product": null, "version": "5.0", "status": "unconfirmed"}
+  ]
+}

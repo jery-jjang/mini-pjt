@@ -84,3 +84,16 @@ def test_LangSmith_추적은_env_값을_따른다(monkeypatch):
     assert config.get_settings().langsmith_tracing is True
     monkeypatch.setenv("LANGSMITH_TRACING", "false")
     assert config.get_settings().langsmith_tracing is False
+
+
+def test_시연_데이터는_여러_번_넣어도_한_번만_들어간다(conn):
+    from src.config import get_settings
+
+    path = get_settings().data_dir / "demo_items.json"
+    first = storage.load_demo(conn, path)
+    assert first["added"] == 19 and first["skipped"] == 0 and first["products_added"] == 8
+    counts = {p: len(storage.list_items(conn, p)) for p in ("pay-api", "portal", "batch")}
+    assert counts == {"pay-api": 10, "portal": 8, "batch": 8}  # 시드 항목과 합쳐 프로젝트마다 8~10개
+    again = storage.load_demo(conn, path)
+    assert again == {"added": 0, "skipped": 19, "products_added": 0}
+    assert {p: len(storage.list_items(conn, p)) for p in counts} == counts
