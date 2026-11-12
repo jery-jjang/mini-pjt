@@ -1,53 +1,63 @@
-/* VulnWatch 로컬 화면. 색은 토큰으로만 쓰고, 다크가 기본, 시스템이 라이트면 밝은 화면. */
+/* VulnWatch 로컬 화면. 색은 토큰으로만 쓴다.
+   따뜻한 베이지 배경 + 크림색 카드 + 주황 주색, 코랄·민트 보조색, 카드와 버튼 아래의 단단한 그림자.
+   라이트가 기본이고, 시스템이 다크면 같은 색감의 어두운 화면. 글자 대비는 모두 4.5:1 이상으로 맞췄다. */
 :root {
-  --bg: #0f172a;
-  --surface: #1b2336;
-  --surface-2: #232c41;
-  --border: #3a4559;
-  --text: #f8fafc;
-  --muted: #a3b0c2;
-  --primary: #22c55e;
-  --on-primary: #0f172a;
-  --focus: #93c5fd;
-  --ok: #4ade80;
-  --warn: #fbbf24;
-  --danger: #f87171;
-  --on-danger: #0f172a;
-  --ok-bg: rgba(74, 222, 128, 0.14);
-  --warn-bg: rgba(251, 191, 36, 0.14);
-  --danger-bg: rgba(248, 113, 113, 0.14);
-  --user-bubble: #2b3a55;
-  --selected-bg: rgba(34, 197, 94, 0.12);
-  --selected-shadow: rgba(34, 197, 94, 0.25);
+  --bg: #f4efeb;
+  --surface: #fffcf9;
+  --surface-2: #f9f3ed;
+  --border: #eedccd;
+  --edge: #e8d5c5;            /* 카드 아래 단단한 그림자 색 */
+  --text: #3a3431;
+  --muted: #6b5f57;
+  --brand: #e8833a;           /* 로고·장식용 주황(글자 바탕으로는 쓰지 않는다) */
+  --primary: #b34c0b;         /* 버튼·강조 글자용 진한 주황 */
+  --primary-edge: #7f3505;
+  --on-primary: #ffffff;
+  --focus: #2563eb;
+  --ok: #0a705c;
+  --warn: #8f5400;
+  --danger: #c0304e;
+  --danger-edge: #8a1f36;
+  --on-danger: #ffffff;
+  --ok-bg: #d5f1e9;
+  --warn-bg: #fcebcf;
+  --danger-bg: #fce1e6;
+  --user-bubble: #fce8d9;
+  --selected-bg: #fff1e6;
+  --selected-shadow: rgba(179, 76, 11, 0.22);
   --mono: ui-monospace, "Cascadia Code", "Consolas", "D2Coding", monospace;
-  --sans: system-ui, -apple-system, "Segoe UI", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif;
-  --radius: 10px;
+  --sans: "Pretendard", "Nunito", system-ui, -apple-system, "Segoe UI", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif;
+  --radius: 14px;
   --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-5: 24px;
-  color-scheme: dark;
+  color-scheme: light;
 }
 
-@media (prefers-color-scheme: light) {
+@media (prefers-color-scheme: dark) {
   :root {
-    --bg: #f1f5f9;
-    --surface: #ffffff;
-    --surface-2: #f8fafc;
-    --border: #cbd5e1;
-    --text: #0f172a;
-    --muted: #475569;
-    --primary: #15803d;
-    --on-primary: #ffffff;
-    --focus: #1d4ed8;
-    --ok: #15803d;
-    --warn: #a16207;
-    --danger: #b91c1c;
-    --on-danger: #ffffff;
-    --ok-bg: #dcfce7;
-    --warn-bg: #fef3c7;
-    --danger-bg: #fee2e2;
-    --user-bubble: #e2e8f0;
-    --selected-bg: #f0fdf4;
-    --selected-shadow: rgba(21, 128, 61, 0.18);
-    color-scheme: light;
+    --bg: #1f1a17;
+    --surface: #2a2320;
+    --surface-2: #342b27;
+    --border: #4a3c35;
+    --edge: #120e0c;
+    --text: #f6eee8;
+    --muted: #c2b3a8;
+    --brand: #f2994a;
+    --primary: #f2994a;
+    --primary-edge: #a85a1c;
+    --on-primary: #1f1a17;
+    --focus: #93c5fd;
+    --ok: #4fd1b0;
+    --warn: #f5c26b;
+    --danger: #ff8fa3;
+    --danger-edge: #b2475d;
+    --on-danger: #1f1a17;
+    --ok-bg: rgba(79, 209, 176, 0.14);
+    --warn-bg: rgba(245, 194, 107, 0.14);
+    --danger-bg: rgba(255, 143, 163, 0.14);
+    --user-bubble: #4a3428;
+    --selected-bg: rgba(242, 153, 74, 0.12);
+    --selected-shadow: rgba(242, 153, 74, 0.25);
+    color-scheme: dark;
   }
 }
 
@@ -337,3 +347,37 @@ dialog::backdrop { background: rgba(2, 6, 23, 0.6); }
   transition: filter 150ms ease;
 }
 .danger:hover:not(:disabled) { filter: brightness(1.08); }
+
+/* ---------- 따뜻한 부드러운 입체 스타일 (카드·버튼 아래 단단한 그림자, 큰 모서리) ---------- */
+.brand { color: var(--text); }
+.brand-icon { color: var(--brand); }
+.topbar { box-shadow: 0 3px 0 var(--edge); }
+.panel { border-radius: 20px; box-shadow: 0 4px 0 var(--edge); }
+.project, .doc-card, .block { border-radius: 16px; box-shadow: 0 3px 0 var(--edge); }
+.msg-bot { border-radius: 16px; box-shadow: 0 3px 0 var(--edge); }
+.msg-user { border-radius: 16px; }
+.chip, .pick, .link-chip, .scan-status, select, .ask-form textarea { box-shadow: 0 2px 0 var(--edge); }
+
+/* 버튼: 아래 그림자가 있고, 누르면 살짝 내려간다 */
+.primary, .danger, .secondary {
+  border-radius: 14px;
+  transition: transform 120ms ease, box-shadow 120ms ease, filter 150ms ease, background-color 150ms ease;
+}
+.primary { box-shadow: 0 4px 0 var(--primary-edge); }
+.danger { box-shadow: 0 4px 0 var(--danger-edge); }
+.secondary {
+  background: var(--surface); color: var(--primary); font-weight: 600;
+  border: 2px solid var(--primary); box-shadow: 0 3px 0 var(--edge);
+}
+.secondary:hover { background: var(--selected-bg); }
+.primary:active:not(:disabled), .danger:active:not(:disabled), .secondary:active {
+  transform: translateY(2px);
+}
+.primary:active:not(:disabled) { box-shadow: 0 2px 0 var(--primary-edge); }
+.danger:active:not(:disabled) { box-shadow: 0 2px 0 var(--danger-edge); }
+.secondary:active { box-shadow: 0 1px 0 var(--edge); }
+
+/* SW·CVE 전환과 고른 답변은 주황으로 */
+.segmented { border-radius: 14px; background: var(--surface-2); box-shadow: 0 2px 0 var(--edge); }
+.segment { border-radius: 10px; }
+.msg-bot[aria-pressed="true"] { box-shadow: 0 4px 0 var(--primary-edge), 0 8px 20px var(--selected-shadow); }
