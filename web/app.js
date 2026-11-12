@@ -25,7 +25,8 @@ const LABELS = {
 const STORE_KEY = "vulnwatch.account";
 
 const $ = (id) => document.getElementById(id);
-const state = { accountId: loadAccount(), messages: [], selected: null, busy: false, role: null };
+// generation: 계정을 바꾸거나 대화를 지울 때마다 1씩 올린다. 그 전에 보낸 요청의 답은 화면에 넣지 않는다.
+const state = { accountId: loadAccount(), messages: [], selected: null, busy: false, role: null, generation: 0 };
 
 // ---------------- 작은 도우미 ----------------
 
@@ -110,9 +111,22 @@ function renderAccounts() {
   select.addEventListener("change", () => {
     state.accountId = select.value;
     saveAccount(state.accountId);
+    resetConversation(); // 다른 계정의 질문과 답이 남아 보이지 않게 한다
     loadProjects();
     loadSettings();
   });
+}
+
+/** 대화, 응답 상세, 입력 중인 질문을 지운다. 진행 중이던 요청의 답은 버린다. */
+function resetConversation() {
+  state.generation += 1;
+  state.messages = [];
+  state.selected = null;
+  state.busy = false;
+  setBusy(false);
+  $("question").value = "";
+  renderChat();
+  renderDetail();
 }
 
 // ---------------- 등록된 SW ----------------
@@ -233,12 +247,14 @@ async function ask(question) {
   question = question.trim();
   if (!question || state.busy) return;
   const account = currentAccount();
+  const generation = state.generation;
   state.messages.push({ role: "user", text: question, account: account.name });
   state.busy = true;
   setBusy(true);
   renderChat();
   try {
     const response = await api("/query", { method: "POST", body: { question } });
+    if (generation !== state.generation) return; // 그사이 계정을 바꿨거나 대화를 지웠다
     state.messages.push({ role: "bot", response });
     state.selected = state.messages.length - 1;
     renderDetail();
@@ -246,8 +262,11 @@ async function ask(question) {
       loadProjects(); // 등록이 바뀌었을 수 있다
     }
   } catch (err) {
+    if (generation !== state.generation) return;
     state.messages.push({ role: "error", status: err.status, text: err.detail });
   } finally {
+    // 이전 계정의 요청이 끝났을 때는 지금 화면의 진행 상태를 건드리지 않는다
+    if (generation !== state.generation) return;
     state.busy = false;
     setBusy(false);
     renderChat();
@@ -431,12 +450,7 @@ function init() {
       $("ask-form").requestSubmit();
     }
   });
-  $("chat-clear").addEventListener("click", () => {
-    state.messages = [];
-    state.selected = null;
-    renderChat();
-    renderDetail();
-  });
+  $("chat-clear").addEventListener("click", resetConversation);
   $("inventory-refresh").addEventListener("click", loadProjects);
   $("settings-open").addEventListener("click", openSettings);
   $("settings-close").addEventListener("click", () => $("settings-dialog").close());
