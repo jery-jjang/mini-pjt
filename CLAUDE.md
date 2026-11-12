@@ -87,6 +87,7 @@ web/                  로컬 화면 (빌드 없는 HTML·CSS·JS. 서버가 /ui�
 - UI용 설정 API: `GET /settings`(누구나)는 `scan_interval_hours`, `scheduler_enabled`, `last_run_at`, `next_run_at`을 돌려준다. `PUT /settings/scan-interval`(보안 담당자만, 본문 `{"hours": 숫자}`)은 검색 주기를 바꾸고 같은 형식으로 돌려준다. 팀원·토큰 없음은 403, 모르는 토큰은 401, 0 이하나 숫자가 아닌 값은 422.
 - UI용 등록 목록 API: `GET /projects`는 토큰 기준(없으면 기본 계정)으로 볼 수 있는 프로젝트와 삭제되지 않은 등록 항목(`id`, `raw_text`, `product`, `version`, `monitored`)을 돌려준다.
 - UI용 삭제 API: `DELETE /projects/{project_id}/items/{item_id}`는 그 항목을 삭제 표시하고 지운 항목을 돌려준다. 모르는 토큰 401, 다른 팀 프로젝트 403, 없거나 이미 지운 항목 404. 알림 수신 주소는 주지 않는다. 모르는 토큰은 401.
+- 화면의 실행 기록(`trace`) 패널은 보안 담당자 계정에만 보인다. 화면에서 숨기는 것이고 `/query` 응답의 `trace`는 규약대로 항상 채운다.
 - 화면(`web/`)은 로컬에서만 쓴다. 계정은 상단에서 데모 토큰 3개 중 고르는 방식이고 로그인 화면은 만들지 않는다.
 
 ## 인-아웃 세트 형식 (제출 규약)

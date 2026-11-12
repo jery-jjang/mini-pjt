@@ -354,19 +354,26 @@ function renderDetail() {
   const body = $("detail-body");
   const m = state.messages[state.selected];
   if (!m || m.role !== "bot") {
-    body.replaceChildren(el("p", { class: "muted", text: "답변을 고르면 라벨, 근거 문서, 실행 기록을 보여 줍니다." }));
+    body.replaceChildren(el("p", { class: "muted", text: "답변을 고르면 근거 문서를 보여 줍니다." }));
     return;
   }
   const r = m.response;
   // 라벨·취약점 수·도구 수는 답변 말풍선에 이미 보이므로 여기서는 근거 문서와 실행 기록만 보여 준다
-  body.replaceChildren(
+  body.replaceChildren(...[
     renderContexts(r.contexts),
-    block(`실행 기록 (trace) ${r.trace.length}단계`, false,
-      r.trace.map((t, i) => el("div", { class: "step" },
-        el("div", { class: "mono", text: `${i + 1}. ${t.step}` }),
-        el("div", { class: "detail-label", text: "입력" }), el("pre", { class: "code", text: t.input }),
-        el("div", { class: "detail-label", text: "출력" }), el("pre", { class: "code", text: t.output })))),
-  );
+    // 실행 기록(도구 입력·출력)은 보안 담당자 화면에만 보여 준다. 화면에서 숨기는 것이고 API 응답의 trace는 규약대로 남는다
+    isSecurityAdmin()
+      ? block(`실행 기록 (trace) ${r.trace.length}단계`, false,
+          r.trace.map((t, i) => el("div", { class: "step" },
+            el("div", { class: "mono", text: `${i + 1}. ${t.step}` }),
+            el("div", { class: "detail-label", text: "입력" }), el("pre", { class: "code", text: t.input }),
+            el("div", { class: "detail-label", text: "출력" }), el("pre", { class: "code", text: t.output }))))
+      : null,
+  ].filter(Boolean));
+}
+
+function isSecurityAdmin() {
+  return currentAccount().id === "security_admin";
 }
 
 // ---------------- 근거 문서: SW / CVE ----------------
