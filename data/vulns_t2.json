@@ -1,0 +1,615 @@
+{
+  "_notice": "실제 공개 데이터(NVD, OSV, CISA KEV)의 고정 사본입니다. 교육용이며 최신 상태를 보장하지 않습니다. synthetic=true 항목은 교육용 가상 항목입니다.",
+  "retrieved": "2026-11-11",
+  "sources": [
+    "https://nvd.nist.gov",
+    "https://osv.dev",
+    "https://www.cisa.gov/known-exploited-vulnerabilities-catalog"
+  ],
+  "score_rule": "점수는 nvd 우선, 없으면 other, 둘 다 없으면 '점수 미정'",
+  "snapshot": "T2",
+  "snapshot_note": "2차 시점. 2026-11-11에 조회한 현재 상태.",
+  "vulnerabilities": [
+    {
+      "id": "CVE-2021-44228",
+      "aliases": [
+        "GHSA-jfh8-c2jp-5v3q"
+      ],
+      "published": "2021-12-10",
+      "description": "Apache Log4j2 2.0-beta9 through 2.15.0 (excluding security releases 2.12.2, 2.12.3, and 2.3.1) JNDI features used in configuration, log messages, and parameters do not protect against attacker controlled LDAP and other JNDI related endpoints. An attacker who can control log messages or log message parameters can execute arbitrary code loaded from LDAP servers when message lookup substitution is enabled. From log4j 2.15.0, this behavior has been disabled by default. From version 2.16.0 (along with 2.12.2, 2.12.3, and 2.3.1), this functionality has been completely removed. Note that this vulnerability is specific to log4j-core and does not affect log4net, log4cxx, or other Apache Logging Services projects.",
+      "scores": {
+        "nvd": 10.0,
+        "other": 10.0,
+        "other_source": "CISA-ADP"
+      },
+      "kev": true,
+      "kev_date_added": "2021-12-10",
+      "affects": [
+        {
+          "product": "log4j",
+          "ranges": [
+            {
+              "introduced": "2.0.1",
+              "fixed": "2.3.1"
+            },
+            {
+              "introduced": "2.4.0",
+              "fixed": "2.12.2"
+            },
+            {
+              "introduced": "2.13.0",
+              "fixed": "2.15.0"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "CVE-2021-45046",
+      "aliases": [
+        "GHSA-7rjr-3q55-vv33"
+      ],
+      "published": "2021-12-14",
+      "description": "It was found that the fix to address CVE-2021-44228 in Apache Log4j 2.15.0 was incomplete in certain non-default configurations. This could allows attackers with control over Thread Context Map (MDC) input data when the logging configuration uses a non-default Pattern Layout with either a Context Lookup (for example, $${ctx:loginId}) or a Thread Context Map pattern (%X, %mdc, or %MDC) to craft malicious input data using a JNDI Lookup pattern resulting in an information leak and remote code execution in some environments and local code execution in all environments. Log4j 2.16.0 (Java 8) and 2.12.2 (Java 7) fix this issue by removing support for message lookup patterns and disabling JNDI functionality by default.",
+      "scores": {
+        "nvd": 9.0,
+        "other": 9.0,
+        "other_source": "CISA-ADP"
+      },
+      "kev": true,
+      "kev_date_added": "2023-05-01",
+      "affects": [
+        {
+          "product": "log4j",
+          "ranges": [
+            {
+              "introduced": "2.0.1",
+              "fixed": "2.12.2"
+            },
+            {
+              "introduced": "2.13.0",
+              "fixed": "2.16.0"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "CVE-2021-45105",
+      "aliases": [
+        "GHSA-p6xc-xr62-6r2g"
+      ],
+      "published": "2021-12-18",
+      "description": "Apache Log4j2 versions 2.0-alpha1 through 2.16.0 (excluding 2.12.3 and 2.3.1) did not protect from uncontrolled recursion from self-referential lookups. This allows an attacker with control over Thread Context Map data to cause a denial of service when a crafted string is interpreted. This issue was fixed in Log4j 2.17.0, 2.12.3, and 2.3.1.",
+      "scores": {
+        "nvd": 5.9,
+        "other": 5.9,
+        "other_source": "CISA-ADP"
+      },
+      "kev": false,
+      "kev_date_added": null,
+      "affects": [
+        {
+          "product": "log4j",
+          "ranges": [
+            {
+              "introduced": "2.0",
+              "fixed": "2.3.1"
+            },
+            {
+              "introduced": "2.4",
+              "fixed": "2.12.3"
+            },
+            {
+              "introduced": "2.13.0",
+              "last_affected": "2.16.0"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "CVE-2022-22965",
+      "aliases": [
+        "GHSA-36p3-wjmg-h94x"
+      ],
+      "published": "2022-04-01",
+      "description": "A Spring MVC or Spring WebFlux application running on JDK 9+ may be vulnerable to remote code execution (RCE) via data binding. The specific exploit requires the application to run on Tomcat as a WAR deployment. If the application is deployed as a Spring Boot executable jar, i.e. the default, it is not vulnerable to the exploit. However, the nature of the vulnerability is more general, and there may be other ways to exploit it.",
+      "scores": {
+        "nvd": 9.8,
+        "other": 9.8,
+        "other_source": "CISA-ADP"
+      },
+      "kev": true,
+      "kev_date_added": "2022-04-04",
+      "affects": [
+        {
+          "product": "spring_framework",
+          "ranges": [
+            {
+              "introduced": "0",
+              "fixed": "5.2.20"
+            },
+            {
+              "introduced": "5.3.0",
+              "fixed": "5.3.18"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "CVE-2022-22950",
+      "aliases": [],
+      "published": "2022-04-01",
+      "description": "n Spring Framework versions 5.3.0 - 5.3.16 and older unsupported versions, it is possible for a user to provide a specially crafted SpEL expression that may cause a denial of service condition.",
+      "scores": {
+        "nvd": 6.5,
+        "other": null,
+        "other_source": null
+      },
+      "kev": false,
+      "kev_date_added": null,
+      "affects": [
+        {
+          "product": "spring_framework",
+          "ranges": [
+            {
+              "introduced": "0",
+              "fixed": "5.2.20"
+            },
+            {
+              "introduced": "5.3.0",
+              "fixed": "5.3.17"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "CVE-2022-22968",
+      "aliases": [
+        "GHSA-g5mm-vmx4-3rg7"
+      ],
+      "published": "2022-04-14",
+      "description": "In Spring Framework versions 5.3.0 - 5.3.18, 5.2.0 - 5.2.20, and older unsupported versions, the patterns for disallowedFields on a DataBinder are case sensitive which means a field is not effectively protected unless it is listed with both upper and lower case for the first character of the field, including upper and lower case for the first character of all nested fields within the property path.",
+      "scores": {
+        "nvd": 5.3,
+        "other": null,
+        "other_source": null
+      },
+      "kev": false,
+      "kev_date_added": null,
+      "affects": [
+        {
+          "product": "spring_framework",
+          "ranges": [
+            {
+              "introduced": "0",
+              "last_affected": "5.2.20"
+            },
+            {
+              "introduced": "5.3.0",
+              "last_affected": "5.3.18"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "CVE-2023-42795",
+      "aliases": [
+        "GHSA-g8pj-r55q-5c2v"
+      ],
+      "published": "2023-10-10",
+      "description": "Incomplete Cleanup vulnerability in Apache Tomcat.When recycling various internal objects in Apache Tomcat from 11.0.0-M1 through 11.0.0-M11, from 10.1.0-M1 through 10.1.13, from 9.0.0-M1 through 9.0.80 and from 8.5.0 through 8.5.93, an error could cause Tomcat to skip some parts of the recycling process leading to information leaking from the current request/response to the next. Older, EOL versions may also be affected. Users are recommended to upgrade to version 11.0.0-M12 onwards, 10.1.14 onwards, 9.0.81 onwards or 8.5.94 onwards, which fixes the issue.",
+      "scores": {
+        "nvd": 5.3,
+        "other": 5.3,
+        "other_source": "CISA-ADP"
+      },
+      "kev": false,
+      "kev_date_added": null,
+      "affects": [
+        {
+          "product": "tomcat",
+          "ranges": [
+            {
+              "introduced": "8.5.0",
+              "fixed": "8.5.94"
+            },
+            {
+              "introduced": "9.0.0",
+              "fixed": "9.0.81"
+            },
+            {
+              "introduced": "10.1.0",
+              "fixed": "10.1.14"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "CVE-2023-44487",
+      "aliases": [
+        "GHSA-qppj-fm5r-hxr3"
+      ],
+      "published": "2023-10-10",
+      "description": "The HTTP/2 protocol allows a denial of service (server resource consumption) because request cancellation can reset many streams quickly, as exploited in the wild in August through October 2023.",
+      "scores": {
+        "nvd": 7.5,
+        "other": 7.5,
+        "other_source": "CISA-ADP"
+      },
+      "kev": true,
+      "kev_date_added": "2023-10-10",
+      "affects": [
+        {
+          "product": "tomcat",
+          "ranges": [
+            {
+              "introduced": "8.5.0",
+              "last_affected": "8.5.93"
+            },
+            {
+              "introduced": "9.0.0",
+              "last_affected": "9.0.80"
+            },
+            {
+              "introduced": "10.1.0",
+              "last_affected": "10.1.13"
+            }
+          ]
+        },
+        {
+          "product": "nginx",
+          "ranges": [
+            {
+              "introduced": "1.9.5",
+              "last_affected": "1.25.2"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "CVE-2023-46589",
+      "aliases": [
+        "GHSA-fccv-jmmp-qg76"
+      ],
+      "published": "2023-11-28",
+      "description": "Improper Input Validation vulnerability in Apache Tomcat.Tomcat from 11.0.0-M1 through 11.0.0-M10, from 10.1.0-M1 through 10.1.15, from 9.0.0-M1 through 9.0.82 and from 8.5.0 through 8.5.95 did not correctly parse HTTP trailer headers. A trailer header that exceeded the header size limit could cause Tomcat to treat a single request as multiple requests leading to the possibility of request smuggling when behind a reverse proxy. Older, EOL versions may also be affected. Users are recommended to upgrade to version 11.0.0-M11 onwards, 10.1.16 onwards, 9.0.83 onwards or 8.5.96 onwards, which fix the issue.",
+      "scores": {
+        "nvd": 7.5,
+        "other": 7.5,
+        "other_source": "CISA-ADP"
+      },
+      "kev": false,
+      "kev_date_added": null,
+      "affects": [
+        {
+          "product": "tomcat",
+          "ranges": [
+            {
+              "introduced": "8.5.0",
+              "fixed": "8.5.96"
+            },
+            {
+              "introduced": "9.0.0",
+              "fixed": "9.0.83"
+            },
+            {
+              "introduced": "10.1.0",
+              "fixed": "10.1.16"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "CVE-2024-50379",
+      "aliases": [
+        "GHSA-5j33-cvvr-w245"
+      ],
+      "published": "2024-12-17",
+      "description": "Time-of-check Time-of-use (TOCTOU) Race Condition vulnerability during JSP compilation in Apache Tomcat permits an RCE on case insensitive file systems when the default servlet is enabled for write (non-default configuration). This issue affects Apache Tomcat: from 11.0.0-M1 through 11.0.1, from 10.1.0-M1 through 10.1.33, from 9.0.0.M1 through 9.0.97. The following versions were EOL at the time the CVE was created but are known to be affected: 8.5.0 though 8.5.100. Other, older, EOL versions may also be affected. Users are recommended to upgrade to version 11.0.2, 10.1.34 or 9.0.98, which fixes the issue.",
+      "scores": {
+        "nvd": null,
+        "other": 9.8,
+        "other_source": "CISA-ADP"
+      },
+      "kev": false,
+      "kev_date_added": null,
+      "affects": [
+        {
+          "product": "tomcat",
+          "ranges": [
+            {
+              "introduced": "9.0.0",
+              "fixed": "9.0.98"
+            },
+            {
+              "introduced": "10.1.0",
+              "fixed": "10.1.34"
+            },
+            {
+              "introduced": "11.0.0",
+              "fixed": "11.0.2"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "CVE-2025-24813",
+      "aliases": [
+        "GHSA-83qj-6fr2-vhqg"
+      ],
+      "published": "2025-03-10",
+      "description": "Path Equivalence: 'file.Name' (Internal Dot) leading to Remote Code Execution and/or Information disclosure and/or malicious content added to uploaded files via write enabled Default Servlet in Apache Tomcat. This issue affects Apache Tomcat: from 11.0.0-M1 through 11.0.2, from 10.1.0-M1 through 10.1.34, from 9.0.0.M1 through 9.0.98. The following versions were EOL at the time the CVE was created but are known to be affected: 8.5.0 though 8.5.100. Other, older, EOL versions may also be affected. If all of the following were true, a malicious user was able to view security sensitive files and/or inject content into those files: - writes enabled for the default servlet (disabled by default) - support for partial PUT (enabled by default) - a target URL for security sensitive uploads that was a sub-directory of a target URL for public uploads - attacker knowledge of the names of security sensitive files being uploaded - the security sensitive files also being uploaded via partial PUT If all of the following were true, a malicious user was able to perform remote code execution: - writes enabled for the default servlet (disabled by default) - support for partial PUT (enabled by default) - application was using Tomcat's file based session persistence with the default storage location - application included a library that may be leveraged in a deserialization attack Users are recommended to upgrade to version 11.0.3, 10.1.35 or 9.0.99, which fixes the issue.",
+      "scores": {
+        "nvd": 9.8,
+        "other": 10.0,
+        "other_source": "CISA-ADP"
+      },
+      "kev": true,
+      "kev_date_added": "2025-04-01",
+      "affects": [
+        {
+          "product": "tomcat",
+          "ranges": [
+            {
+              "introduced": "9.0.0",
+              "fixed": "9.0.99"
+            },
+            {
+              "introduced": "10.1.0",
+              "fixed": "10.1.35"
+            },
+            {
+              "introduced": "11.0.0",
+              "fixed": "11.0.3"
+            }
+          ]
+        }
+      ],
+      "note": "NVD 구성에는 9.0 가지의 시작 버전이 없어 설명문 기준(9.0.0.M1부터)으로 9.0.0을 시작으로 적었다."
+    },
+    {
+      "id": "CVE-2023-41080",
+      "aliases": [],
+      "published": "2023-08-25",
+      "description": "URL Redirection to Untrusted Site ('Open Redirect') vulnerability in FORM authentication feature Apache Tomcat.This issue affects Apache Tomcat: from 11.0.0-M1 through 11.0.0-M10, from 10.1.0-M1 through 10.0.12, from 9.0.0-M1 through 9.0.79 and from 8.5.0 through 8.5.92. Older, EOL versions may also be affected. The vulnerability is limited to the ROOT (default) web application.",
+      "scores": {
+        "nvd": 6.1,
+        "other": null,
+        "other_source": null
+      },
+      "kev": false,
+      "kev_date_added": null,
+      "affects": [
+        {
+          "product": "tomcat",
+          "ranges": [
+            {
+              "introduced": "8.5.0",
+              "last_affected": "8.5.92"
+            },
+            {
+              "introduced": "9.0.0",
+              "last_affected": "9.0.79"
+            },
+            {
+              "introduced": "10.1.0",
+              "last_affected": "10.1.12"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "CVE-2024-7347",
+      "aliases": [],
+      "published": "2024-08-14",
+      "description": "NGINX Open Source and NGINX Plus have a vulnerability in the ngx_http_mp4_module, which might allow an attacker to over-read NGINX worker memory resulting in its termination, using a specially crafted mp4 file. The issue only affects NGINX if it is built with the ngx_http_mp4_module and the mp4 directive is used in the configuration file. Additionally, the attack is possible only if an attacker can trigger the processing of a specially crafted mp4 file with the ngx_http_mp4_module. Note: Software versions which have reached End of Technical Support (EoTS) are not evaluated.",
+      "scores": {
+        "nvd": 4.7,
+        "other": 4.7,
+        "other_source": "CNA(F5)"
+      },
+      "kev": false,
+      "kev_date_added": null,
+      "affects": [
+        {
+          "product": "nginx",
+          "ranges": [
+            {
+              "introduced": "1.5.13",
+              "fixed": "1.26.2"
+            },
+            {
+              "introduced": "1.27.0",
+              "last_affected": "1.27.0"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "CVE-2022-41741",
+      "aliases": [],
+      "published": "2022-10-19",
+      "description": "NGINX Open Source before versions 1.23.2 and 1.22.1, NGINX Open Source Subscription before versions R2 P1 and R1 P1, and NGINX Plus before versions R27 P1 and R26 P1 have a vulnerability in the module ngx_http_mp4_module that might allow a local attacker to corrupt NGINX worker memory, resulting in its termination or potential other impact using a specially crafted audio or video file. The issue affects only NGINX products that are built with the ngx_http_mp4_module, when the mp4 directive is used in the configuration file. Further, the attack is possible only if an attacker can trigger processing of a specially crafted audio or video file with the module ngx_http_mp4_module.",
+      "scores": {
+        "nvd": 7.8,
+        "other": 7.0,
+        "other_source": "CNA(F5)"
+      },
+      "kev": false,
+      "kev_date_added": null,
+      "affects": [
+        {
+          "product": "nginx",
+          "ranges": [
+            {
+              "introduced": "1.1.3",
+              "last_affected": "1.22.0"
+            },
+            {
+              "introduced": "1.23.0",
+              "last_affected": "1.23.1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "CVE-2022-3602",
+      "aliases": [],
+      "published": "2022-11-01",
+      "description": "A buffer overrun can be triggered in X.509 certificate verification, specifically in name constraint checking. Note that this occurs after certificate chain signature verification and requires either a CA to have signed the malicious certificate or for the application to continue certificate verification despite failure to construct a path to a trusted issuer. An attacker can craft a malicious email address to overflow four attacker-controlled bytes on the stack. This buffer overflow could result in a crash (causing a denial of service) or potentially remote code execution. Many platforms implement stack overflow protections which would mitigate against the risk of remote code execution. The risk may be further mitigated based on stack layout for any given platform/compiler. Pre-announcements of CVE-2022-3602 described this issue as CRITICAL. Further analysis based on some of the mitigating factors described above have led this to be downgraded to HIGH. Users are still encouraged to upgrade to a new version as soon as possible. In a TLS client, this can be triggered by connecting to a malicious server. In a TLS server, this can be triggered if the server requests client authentication and a malicious client connects. Fixed in OpenSSL 3.0.7 (Affected 3.0.0,3.0.1,3.0.2,3.0.3,3.0.4,3.0.5,3.0.6).",
+      "scores": {
+        "nvd": 7.5,
+        "other": 7.5,
+        "other_source": "CISA-ADP"
+      },
+      "kev": false,
+      "kev_date_added": null,
+      "affects": [
+        {
+          "product": "openssl",
+          "ranges": [
+            {
+              "introduced": "3.0.0",
+              "fixed": "3.0.7"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "CVE-2023-0286",
+      "aliases": [],
+      "published": "2023-02-08",
+      "description": "There is a type confusion vulnerability relating to X.400 address processing inside an X.509 GeneralName. X.400 addresses were parsed as an ASN1_STRING but the public structure definition for GENERAL_NAME incorrectly specified the type of the x400Address field as ASN1_TYPE. This field is subsequently interpreted by the OpenSSL function GENERAL_NAME_cmp as an ASN1_TYPE rather than an ASN1_STRING. When CRL checking is enabled (i.e. the application sets the X509_V_FLAG_CRL_CHECK flag), this vulnerability may allow an attacker to pass arbitrary pointers to a memcmp call, enabling them to read memory contents or enact a denial of service. In most cases, the attack requires the attacker to provide both the certificate chain and CRL, neither of which need to have a valid signature. If the attacker only controls one of these inputs, the other input must already contain an X.400 address as a CRL distribution point, which is uncommon. As such, this vulnerability is most likely to only affect applications which have implemented their own functionality for retrieving CRLs over a network.",
+      "scores": {
+        "nvd": 7.4,
+        "other": 7.4,
+        "other_source": "CISA-ADP"
+      },
+      "kev": false,
+      "kev_date_added": null,
+      "affects": [
+        {
+          "product": "openssl",
+          "ranges": [
+            {
+              "introduced": "3.0.0",
+              "fixed": "3.0.8"
+            }
+          ]
+        }
+      ],
+      "note": "OpenSSL 1.0.2, 1.1.1 가지의 영향 범위는 이 사본에서 생략했다(3.0 가지만 수록)."
+    },
+    {
+      "id": "CVE-2022-0778",
+      "aliases": [],
+      "published": "2022-03-15",
+      "description": "The BN_mod_sqrt() function, which computes a modular square root, contains a bug that can cause it to loop forever for non-prime moduli. Internally this function is used when parsing certificates that contain elliptic curve public keys in compressed form or explicit elliptic curve parameters with a base point encoded in compressed form. It is possible to trigger the infinite loop by crafting a certificate that has invalid explicit curve parameters. Since certificate parsing happens prior to verification of the certificate signature, any process that parses an externally supplied certificate may thus be subject to a denial of service attack. The infinite loop can also be reached when parsing crafted private keys as they can contain explicit elliptic curve parameters. Thus vulnerable situations include: - TLS clients consuming server certificates - TLS servers consuming client certificates - Hosting providers taking certificates or private keys from customers - Certificate authorities parsing certification requests from subscribers - Anything else which parses ASN.1 elliptic curve parameters Also any other applications that use the BN_mod_sqrt() where the attacker can control the parameter values are vulnerable to this DoS issue. In the OpenSSL 1.0.2 version the public key is not parsed during initial parsing of the certificate which makes it slightly harder to trigger the infinite loop. However any operation which requires the public key from the certificate will trigger the infinite loop. In particular the attacker can use a self-signed certificate to trigger the loop during verification of the certificate signature. This issue affects OpenSSL versions 1.0.2, 1.1.1 and 3.0. It was addressed in the releases of 1.1.1n and 3.0.2 on the 15th March 2022. Fixed in OpenSSL 3.0.2 (Affected 3.0.0,3.0.1). Fixed in OpenSSL 1.1.1n (Affected 1.1.1-1.1.1m). Fixed in OpenSSL 1.0.2zd (Affected 1.0.2-1.0.2zc).",
+      "scores": {
+        "nvd": 7.5,
+        "other": 7.5,
+        "other_source": "CISA-ADP"
+      },
+      "kev": false,
+      "kev_date_added": null,
+      "affects": [
+        {
+          "product": "openssl",
+          "ranges": [
+            {
+              "introduced": "3.0.0",
+              "fixed": "3.0.2"
+            }
+          ]
+        }
+      ],
+      "note": "OpenSSL 1.0.2, 1.1.1 가지의 영향 범위는 이 사본에서 생략했다(3.0 가지만 수록)."
+    },
+    {
+      "id": "CVE-2023-4911",
+      "aliases": [],
+      "published": "2023-10-03",
+      "description": "A buffer overflow was discovered in the GNU C Library's dynamic loader ld.so while processing the GLIBC_TUNABLES environment variable. This issue could allow a local attacker to use maliciously crafted GLIBC_TUNABLES environment variables when launching binaries with SUID permission to execute code with elevated privileges.",
+      "scores": {
+        "nvd": 7.8,
+        "other": 7.8,
+        "other_source": "CNA(Red Hat)"
+      },
+      "kev": true,
+      "kev_date_added": "2023-11-21",
+      "affects": [
+        {
+          "product": "ubuntu",
+          "versions": [
+            "22.04",
+            "23.04"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "CVE-2024-6387",
+      "aliases": [],
+      "published": "2024-07-01",
+      "description": "A security regression (CVE-2006-5051) was discovered in OpenSSH's server (sshd). There is a race condition which can lead sshd to handle some signals in an unsafe manner. An unauthenticated, remote attacker may be able to trigger it by failing to authenticate within a set time period.",
+      "scores": {
+        "nvd": 8.1,
+        "other": 8.1,
+        "other_source": "CNA(Red Hat)"
+      },
+      "kev": false,
+      "kev_date_added": null,
+      "affects": [
+        {
+          "product": "ubuntu",
+          "versions": [
+            "22.04",
+            "22.10",
+            "23.04",
+            "23.10",
+            "24.04"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "GHSA-0000-demo-0001",
+      "aliases": [],
+      "published": "2024-01-01",
+      "description": "[교육용 가상 항목입니다. 실제 취약점이 아닙니다] CVE가 배정되지 않고 GHSA ID만 있는 사례를 보여 주기 위한 항목. NGINX 1.20.0 이상 1.25.0 미만에서 특정 설정일 때 오류 응답에 내부 경로가 드러날 수 있다고 가정한다.",
+      "scores": {
+        "nvd": null,
+        "other": 5.3,
+        "other_source": "OSV(가상)"
+      },
+      "kev": false,
+      "kev_date_added": null,
+      "affects": [
+        {
+          "product": "nginx",
+          "ranges": [
+            {
+              "introduced": "1.20.0",
+              "fixed": "1.25.0"
+            }
+          ]
+        }
+      ],
+      "synthetic": true,
+      "note": "교육용 가상 항목. 여섯 제품을 OSV에서 조회했을 때 CVE 없는 실제 GHSA 항목이 없어 만들었다."
+    }
+  ]
+}
