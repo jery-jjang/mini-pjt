@@ -1,4 +1,4 @@
-"""알림 메일을 만들어 파일로 저장하고 발송 이력을 남긴다.
+"""알림 메일을 만들어 DB(mails 표)에 저장하고 발송 이력을 남긴다. 실제로 발송하지 않는다(가짜 발송).
 
 - 메일의 필수 내용(CVE ID, 점수 또는 KEV 여부, 제품과 버전)은 코드가 넣는다.
 - 취약점마다 한 줄 요약은 LLM이 쓴다. LLM에는 취약점 ID, 제품과 버전, 공개 설명문만 보낸다.
@@ -6,7 +6,6 @@
 """
 
 from datetime import datetime
-from pathlib import Path
 
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
@@ -61,25 +60,18 @@ def summarize(items: list[dict], llm) -> dict[str, str]:
     return {i["id"]: summaries.get(i["id"].upper()) or _fallback(i["description"]) for i in items}
 
 
-def _next_path(outbox_dir, name: str) -> Path:
-    """저장할 파일 경로. 순번을 앞에 붙여 겹치지 않게 한다."""
-    outbox = Path(outbox_dir)
-    outbox.mkdir(parents=True, exist_ok=True)
-    return outbox / f"{len(list(outbox.glob('*.txt'))) + 1:04d}_{name}.txt"
+FOOTER = "이 메일은 교육용 PoC에서 DB에 저장한 알림입니다. 실제로 발송되지 않았습니다."
 
 
-def save_alert_mail(conn, project: dict, items: list[dict], outbox_dir, llm=None, now: datetime | None = None) -> Path:
-    """프로젝트의 알림 메일 한 통을 파일로 저장하고, 취약점마다 발송 이력을 남긴다.
+def save_alert_mail(conn, project: dict, items: list[dict], llm=None, now: datetime | None = None) -> int:
+    """프로젝트의 알림 메일 한 통을 DB에 저장하고, 취약점마다 발송 이력을 남긴다. 메일 번호를 돌려준다.
 
     items의 각 항목: id, name(제품 이름), version, score, score_source, kev, reason, description
     """
     now = now or datetime.now()
     summaries = summarize(items, llm)
+    subject = f'[VulnWatch] {project["name"]}: 확인이 필요한 취약점 {len(items)}건'
     lines = [
-        f'To: {project["alert_email"]}',
-        f'Subject: [VulnWatch] {project["name"]}: 확인이 필요한 취약점 {len(items)}건',
-        f"Date: {now:%Y-%m-%d %H:%M:%S}",
-        "",
         f'프로젝트: {project["name"]}',
         f"알림 조건(CVSS 9.0 이상 또는 CISA KEV 등재)에 해당하는 취약점 {len(items)}건을 알려 드립니다.",
         "",
@@ -93,29 +85,52 @@ def save_alert_mail(conn, project: dict, items: list[dict], outbox_dir, llm=None
             f'   - 요약: {summaries[item["id"]]}',
             "",
         ]
-    lines.append("이 메일은 교육용 PoC에서 파일로 저장한 알림입니다. 실제로 발송되지 않았습니다.")
-    path = _next_path(outbox_dir, project["id"])
-    path.write_text("\n".join(lines), encoding="utf-8")
+    lines.append(FOOTER)
+    sent_at = now.isoformat(timespec="seconds")
+    mail_id = storage.add_mail(conn, "alert", project["id"], project["alert_email"], subject, "\n".join(lines), sent_at)
     for item in items:
-        storage.add_alert(conn, project["id"], item["id"], item["reason"], item["score"], item["kev"],
-                          now.isoformat(timespec="seconds"), path.name)
-    return path
+        storage.add_alert(conn, project["id"], item["id"], item["reason"], item["score"], item["kev"], sent_at, mail_id)
+    return mail_id
 
 
-def save_failure_notice(conn, failures: int, error: str, outbox_dir, now: datetime | None = None) -> Path:
-    """취약점 조회가 연속으로 실패했음을 보안 담당자 앞 메일 파일로 저장한다."""
+def save_failure_notice(conn, failures: int, error: str, now: datetime | None = None) -> int:
+    """취약점 조회가 연속으로 실패했음을 보안 담당자 앞 메일로 DB에 저장한다. 메일 번호를 돌려준다."""
     now = now or datetime.now()
     lines = [
-        f'To: {storage.get_meta(conn, "security_admin_email")}',
-        f"Subject: [VulnWatch] 취약점 조회 {failures}회 연속 실패",
-        f"Date: {now:%Y-%m-%d %H:%M:%S}",
-        "",
         f"취약점 정보원 조회가 {failures}회 연속 실패했습니다. 이 기간에는 새 취약점 알림이 나가지 않았습니다.",
         f"마지막 오류: {error}",
         "조회가 다시 성공하면 놓친 구간은 다음 검색에서 한꺼번에 처리됩니다.",
         "",
-        "이 메일은 교육용 PoC에서 파일로 저장한 알림입니다. 실제로 발송되지 않았습니다.",
+        FOOTER,
     ]
-    path = _next_path(outbox_dir, "scan-failure")
-    path.write_text("\n".join(lines), encoding="utf-8")
-    return path
+    return storage.add_mail(conn, "scan_failure", None, storage.get_meta(conn, "security_admin_email"),
+                            f"[VulnWatch] 취약점 조회 {failures}회 연속 실패", "\n".join(lines),
+                            now.isoformat(timespec="seconds"))
+
+
+def format_mail(mail: dict) -> str:
+    """저장된 메일을 사람이 읽는 모양(머리글 + 본문)으로 만든다."""
+    return "\n".join([f'To: {mail["recipient"]}', f'Subject: {mail["subject"]}',
+                      f'Date: {mail["created_at"].replace("T", " ")}', "", mail["body"]])
+
+
+if __name__ == "__main__":
+    import argparse
+
+    from src.config import get_settings
+
+    parser = argparse.ArgumentParser(description="DB에 저장된 알림 메일 보기")
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--list", action="store_true", help="저장된 메일 목록")
+    group.add_argument("--show", type=int, metavar="N", help="N번 메일 본문")
+    args = parser.parse_args()
+    db = storage.connect(get_settings().db_path)
+    if args.list:
+        mails = storage.list_mails(db)
+        if not mails:
+            print("저장된 메일이 없습니다.")
+        for m in mails:
+            print(f'{m["id"]:>4}  {m["created_at"].replace("T", " ")}  {m["kind"]:<12} {m["subject"]}')
+    else:
+        mail = storage.get_mail(db, args.show)
+        print(format_mail(mail) if mail else f"{args.show}번 메일이 없습니다.")

@@ -51,7 +51,7 @@ LangSmith 추적은 `.env`의 `LANGSMITH_TRACING=true`, `LANGSMITH_API_KEY`, `LA
         │                    (일반 코드, LLM 없음)    │              │   알림 대상 판정
         ▼                                             ▼              ▼
   src/storage.py (SQLite)                   src/retriever.py   src/scheduler.py ──▶ src/notifier.py
-  등록 항목, 대기 후보, 알림 이력           (BM25)             (6시간 주기)        메일을 outbox/에 저장
+  등록 항목, 대기 후보, 알림 이력, 메일     (BM25)             (6시간 주기)        메일을 DB(mails)에 저장
                                                   ▲                  ▲
                                                   └── src/sources.py ┘  data/vulns_t1.json, vulns_t2.json
 ```
@@ -106,10 +106,11 @@ VULNWATCH_REGION=us-east-1
 
 ```
 .venv\Scripts\python -m uvicorn app:app                    서버 실행. 화면은 http://127.0.0.1:8000/ui/
-.venv\Scripts\python -m pytest tests -q                    자동 테스트 159건 (실제 LLM 호출 없음)
+.venv\Scripts\python -m pytest tests -q                    자동 테스트 164건 (실제 LLM 호출 없음)
 .venv\Scripts\python evaluation/run_eval.py --round 1      인-아웃 세트 25건 평가 (실제 Bedrock 호출)
 .venv\Scripts\python evaluation/run_ragas.py --round 1     RAGAS 지표 (설치 방법은 requirements.txt 아래쪽)
-.venv\Scripts\python -m src.scheduler --snapshot T2        검색 1회 실행 (알림 메일은 outbox/에 저장)
+.venv\Scripts\python -m src.scheduler --snapshot T2        검색 1회 실행 (알림 메일은 DB에 저장)
+.venv\Scripts\python -m src.notifier --list                저장된 알림 메일 목록 (--show N 으로 N번 본문)
 .venv\Scripts\python -m src.storage --load-demo            로컬 DB에 시연용 등록 항목 19개 추가 (프로젝트마다 8~10개가 된다)
 ```
 
@@ -162,6 +163,8 @@ Invoke-RestMethod http://127.0.0.1:8000/settings/scan-interval -Method Put -Cont
 |---|---|---|
 | `GET /projects` | 토큰 기준(없으면 팀 A 팀원) | 계정이 볼 수 있는 프로젝트와 지우지 않은 등록 항목(항목 번호, 입력 문장, 표준 제품 이름, 버전, 감시 여부). 알림 수신 주소는 주지 않습니다. 모르는 토큰은 401 |
 | `DELETE /projects/{project_id}/items/{item_id}` | 팀원은 자기 팀, 보안 담당자는 전체 | 등록한 SW 하나를 지웁니다(삭제 표시, 기록은 남김). 모르는 토큰 401, 다른 팀 403, 없거나 이미 지운 항목 404 |
+| `GET /mails`, `GET /mails/{mail_id}` | 팀원은 자기 팀 알림, 보안 담당자는 전체 | 알림함의 메일 목록(안 읽은 수 `unread_count`, 메일별 `read`)과 본문. 받는 주소와 계정별 읽음 현황(`readers`)은 보안 담당자에게만 줍니다. 모르는 토큰 401, 볼 수 없거나 없는 메일 404 |
+| `POST /mails/{mail_id}/read`, `POST /mails/read-all` | 위와 같음 | 요청한 계정 기준으로 읽음 표시. 다른 계정의 읽음 현황은 바뀌지 않습니다 |
 
 질문을 API로 직접 보낼 수도 있습니다. 브라우저에서 `http://127.0.0.1:8000/docs`를 열어 `POST /query`를 실행하거나, PowerShell에서는 아래처럼 보냅니다.
 
@@ -274,7 +277,7 @@ Windows에서 `curl -d "{...한글...}"`처럼 한글 질문을 명령줄에 직
 
 - 현황 조회 답변의 근거인 프로젝트 등록 목록은 `contexts`에 싣지 않습니다. 그래서 현황 문항의 RAGAS 점수가 낮습니다. 등록 목록에는 프로젝트명이 들어 있어 평가 모델에 보내기 전에 가려야 하므로 이번에는 넣지 않았습니다.
 - 라벨이 모델의 도구 선택에 기댑니다. 모델이 도구를 부르지 않고 "확인할 수 없음"이라고 답하면 라벨이 `answer`로 남습니다.
-- 취약점 데이터는 고정 사본 20건이고, 실시간 NVD/OSV 조회와 오탐 교정은 만들지 않았습니다. 실제 메일 발송도 하지 않고 파일로 저장합니다.
+- 취약점 데이터는 고정 사본 20건이고, 실시간 NVD/OSV 조회와 오탐 교정은 만들지 않았습니다. 실제 메일 발송도 하지 않고 DB에 저장해 화면 알림함에서 봅니다.
 - CVE가 없는 GHSA 사례는 여섯 제품에서 실제 항목을 찾지 못해 교육용 가상 항목 1건으로 대신했습니다.
 - 쿼리 확장 키워드에 "vulnerability", "exploit" 같은 일반 단어가 섞여 키워드 검색에 잡음이 생깁니다. 리랭킹도 하지 않았습니다.
 - Nova Pro는 도구 선택(1번), 도구 호출 형식(7번), 채점 형식(4, 14, 26번)이 불안정합니다. 7번은 재시도 미들웨어를 넣은 뒤 따로 5번 돌려 4번 통과했고, 2차 평가에서도 통과했습니다. 13번은 같은 형식 오류가 재시도 세 번 모두 나 오류로 남았습니다. 같은 25건을 Claude Sonnet 4.5로 돌렸을 때는 1차 22건, 2차 25건이 통과했습니다. 모델을 바꿀 때마다 평가를 다시 돌려야 하고, LLM 채점은 답변 모델과 따로 정하는 편이 낫습니다.

@@ -25,12 +25,10 @@ def conn(tmp_path):
 
 
 @pytest.fixture
-def outbox(tmp_path, monkeypatch):
-    """알림 메일을 저장할 임시 폴더."""
-    path = tmp_path / "outbox"
-    monkeypatch.setenv("VULNWATCH_OUTBOX_DIR", str(path))
+def mailbox(conn, monkeypatch):
+    """알림 메일이 저장되는 곳(임시 SQLite의 mails 표)."""
     monkeypatch.setenv("VULNWATCH_DATA_DIR", str(ROOT / "data"))
-    return path
+    return conn
 
 
 class FakeSummaryLLM:

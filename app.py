@@ -214,6 +214,101 @@ def delete_item(project_id: str, item_id: int, authorization: str | None = Heade
     return {"project": project["name"], "removed": _item_out(removed, names)}
 
 
+class MailOut(BaseModel):
+    """저장된 알림 메일 한 통. 받는 주소는 보안 담당자에게만 준다."""
+
+    id: int
+    kind: str  # alert(프로젝트 알림) 또는 scan_failure(조회 연속 실패 통지)
+    project: str | None  # 프로젝트 이름. 조회 실패 통지는 None
+    subject: str
+    created_at: str
+    vuln_ids: list[str]
+    recipient: str | None = None
+    body: str | None = None  # 목록에서는 비우고 한 통을 볼 때만 채운다
+    read: bool = False  # 요청한 계정이 읽었는지. 읽음 현황은 계정마다 따로다
+    read_at: str | None = None
+    readers: list[dict] | None = None  # 보안 담당자에게만: 볼 수 있는 계정마다 {account, name, read_at}
+
+
+class MailsResponse(BaseModel):
+    """볼 수 있는 메일 목록(최근 것부터)."""
+
+    mails: list[MailOut]
+    unread_count: int  # 요청한 계정이 아직 읽지 않은 메일 수
+
+
+def _visible_mails(account: dict) -> list[dict]:
+    """계정이 볼 수 있는 메일. 팀원은 자기 팀 프로젝트 알림만, 보안 담당자는 조회 실패 통지까지 전체."""
+    conn = app.state.conn
+    if account["role"] == "security_admin":
+        return storage.list_mails(conn)
+    ids = {p["id"] for p in auth.accessible_projects(conn, account)}
+    return storage.list_mails(conn, project_ids=ids, include_system=False)
+
+
+def _mail_out(mail: dict, account: dict, with_body: bool = False) -> dict:
+    """메일을 화면에 보낼 모양으로 바꾼다."""
+    conn = app.state.conn
+    names = {p["id"]: p["name"] for p in storage.list_projects(conn)}
+    admin = account["role"] == "security_admin"
+    return {"id": mail["id"], "kind": mail["kind"], "project": names.get(mail["project"]) if mail["project"] else None,
+            "subject": mail["subject"], "created_at": mail["created_at"],
+            "vuln_ids": storage.mail_vulns(conn, mail["id"]),
+            "recipient": mail["recipient"] if admin else None,
+            "body": mail["body"] if with_body else None,
+            "read_at": (read_at := storage.read_time(conn, mail["id"], account["id"])), "read": read_at is not None,
+            "readers": _readers(mail) if admin and with_body else None}
+
+
+def _readers(mail: dict) -> list[dict]:
+    """이 메일을 볼 수 있는 계정마다 읽었는지와 읽은 시각. 보안 담당자가 전달 여부를 확인할 때 쓴다."""
+    conn = app.state.conn
+    read = storage.mail_readers(conn, mail["id"])
+    project = next((p for p in storage.list_projects(conn) if p["id"] == mail["project"]), None)
+    accounts = [dict(r) for r in conn.execute("SELECT * FROM accounts ORDER BY id")]
+    viewers = [a for a in accounts if a["role"] == "security_admin" or (project and auth.can_access(a, project))]
+    return [{"account": a["id"], "name": a["name"], "read_at": read.get(a["id"])} for a in viewers]
+
+
+@app.get("/mails", response_model=MailsResponse)
+def read_mails(authorization: str | None = Header(default=None)):
+    """화면 '알림함'의 메일 목록. 가짜 발송한 메일은 파일이 아니라 DB에 있다. 모르는 토큰 401."""
+    account = _account(authorization)
+    mails = [_mail_out(m, account) for m in _visible_mails(account)]
+    return {"mails": mails, "unread_count": sum(not m["read"] for m in mails)}
+
+
+@app.post("/mails/read-all", response_model=MailsResponse)
+def mark_all_read(authorization: str | None = Header(default=None)):
+    """요청한 계정이 볼 수 있는 메일을 모두 읽음으로 표시한다. 다른 계정의 읽음 현황은 바꾸지 않는다."""
+    account = _account(authorization)
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    for mail in _visible_mails(account):
+        storage.mark_read(app.state.conn, mail["id"], account["id"], now)
+    return read_mails(authorization)
+
+
+@app.post("/mails/{mail_id}/read", response_model=MailOut)
+def mark_mail_read(mail_id: int, authorization: str | None = Header(default=None)):
+    """메일 한 통을 요청한 계정 기준으로 읽음 표시한다. 볼 수 없거나 없는 메일은 404."""
+    account = _account(authorization)
+    mail = next((m for m in _visible_mails(account) if m["id"] == mail_id), None)
+    if mail is None:
+        raise HTTPException(status_code=404, detail="메일을 찾을 수 없습니다.")
+    storage.mark_read(app.state.conn, mail_id, account["id"], datetime.now(timezone.utc).isoformat(timespec="seconds"))
+    return _mail_out(mail, account, with_body=True)
+
+
+@app.get("/mails/{mail_id}", response_model=MailOut)
+def read_mail(mail_id: int, authorization: str | None = Header(default=None)):
+    """메일 한 통의 본문. 볼 수 없거나 없는 메일은 404(있는지도 알리지 않는다). 모르는 토큰 401."""
+    account = _account(authorization)
+    mail = next((m for m in _visible_mails(account) if m["id"] == mail_id), None)
+    if mail is None:
+        raise HTTPException(status_code=404, detail="메일을 찾을 수 없습니다.")
+    return _mail_out(mail, account, with_body=True)
+
+
 @app.get("/settings", response_model=SettingsResponse)
 def read_settings():
     """주기 검색 설정(주기, 사용 여부, 마지막·다음 검색 시각)을 본다. 누구나 볼 수 있다."""

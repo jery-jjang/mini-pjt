@@ -327,3 +327,92 @@ def test_API_잘못된_요청은_거부한다(client):
     for res in (c.post("/query", json={"question": "현황"}, headers={"Authorization": "Bearer wrong"}),
                 c.post("/query", json={})):
         assert res.headers["content-type"] == "application/json; charset=utf-8"  # 오류 응답도 인코딩을 밝힌다
+
+
+# ---------------- 알림함 ----------------
+
+def _send_mails(conn):
+    """팀 A 프로젝트 알림, 팀 B 프로젝트 알림, 조회 실패 통지를 한 통씩 DB에 저장한다."""
+    from src import notifier
+
+    item = {"id": "CVE-2021-44228", "name": "Apache Log4j", "version": "2.14.1", "score": 10.0,
+            "score_source": "NVD", "kev": True, "reason": "new", "description": "JNDI lookup issue."}
+    projects = {p["id"]: p for p in storage.list_projects(conn)}
+    a = notifier.save_alert_mail(conn, projects["pay-api"], [item])
+    b = notifier.save_alert_mail(conn, projects["batch"], [item | {"name": "Ubuntu Linux", "version": "22.04"}])
+    f = notifier.save_failure_notice(conn, 2, "timeout")
+    return a, b, f
+
+
+def test_API_알림함은_팀원에게_자기_팀_알림만_보여_준다(client):
+    c, application = client
+    a, b, f = _send_mails(application.state.conn)
+    mine = c.get("/mails").json()["mails"]  # 팀 A 팀원
+    assert [m["id"] for m in mine] == [a]
+    assert mine[0]["project"] == "결제 API" and mine[0]["vuln_ids"] == ["CVE-2021-44228"]
+    assert mine[0]["recipient"] is None and mine[0]["body"] is None  # 받는 주소는 주지 않고, 목록에는 본문이 없다
+    one = c.get(f"/mails/{a}").json()
+    assert "CVE-2021-44228" in one["body"] and "DB에 저장한 알림" in one["body"]
+    assert c.get(f"/mails/{b}").status_code == 404  # 다른 팀 알림
+    assert c.get(f"/mails/{f}").status_code == 404  # 조회 실패 통지는 보안 담당자만
+    assert c.get("/mails", headers={"Authorization": "Bearer wrong"}).status_code == 401
+
+
+def test_API_보안_담당자는_조회_실패_통지까지_모두_본다(client):
+    c, application = client
+    a, b, f = _send_mails(application.state.conn)
+    admin = {"Authorization": "Bearer demo-token-security"}
+    mails = c.get("/mails", headers=admin).json()["mails"]
+    assert [m["id"] for m in mails] == [f, b, a]  # 최근 것부터
+    failure = next(m for m in mails if m["id"] == f)
+    assert failure["kind"] == "scan_failure" and failure["project"] is None and "@" in failure["recipient"]
+    assert c.get("/mails/9999", headers=admin).status_code == 404
+
+
+def test_예전_DB에는_알림_이력의_메일_번호_열을_더한다(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "old.db"
+    old = sqlite3.connect(path)
+    old.execute("CREATE TABLE alerts (id INTEGER PRIMARY KEY AUTOINCREMENT, project TEXT NOT NULL, vuln_id TEXT NOT NULL,"
+                " reason TEXT NOT NULL, score REAL, kev INTEGER NOT NULL, sent_at TEXT NOT NULL, file TEXT NOT NULL)")
+    old.commit()
+    old.close()
+    conn = storage.connect(path)
+    assert "mail_id" in {r["name"] for r in conn.execute("PRAGMA table_info(alerts)")}
+    storage.add_alert(conn, "pay-api", "CVE-2021-44228", "new", 10.0, True, "2026-11-12T00:00:00", 1)
+    assert conn.execute("SELECT mail_id FROM alerts").fetchone()[0] == 1
+
+
+def test_API_읽음_현황은_계정마다_따로다(client):
+    c, application = client
+    a, b, f = _send_mails(application.state.conn)
+    team_a = {}  # 토큰 없음 = 팀 A 팀원
+    admin = {"Authorization": "Bearer demo-token-security"}
+    assert c.get("/mails").json()["unread_count"] == 1
+    assert c.get("/mails", headers=admin).json()["unread_count"] == 3
+    assert c.get(f"/mails/{a}").json()["read"] is False  # 열람(GET)만으로는 읽음이 되지 않는다
+
+    read = c.post(f"/mails/{a}/read", headers=team_a).json()
+    assert read["read"] is True and read["read_at"]
+    first_time = read["read_at"]
+    assert c.post(f"/mails/{a}/read").json()["read_at"] == first_time  # 다시 읽어도 처음 시각 유지
+    assert c.get("/mails").json()["unread_count"] == 0
+    assert c.get("/mails", headers=admin).json()["unread_count"] == 3  # 팀원이 읽어도 보안 담당자에게는 안 읽음
+    assert c.post(f"/mails/{b}/read").status_code == 404  # 다른 팀 메일은 읽음 표시도 못 한다
+
+
+def test_API_보안_담당자는_메일별로_누가_읽었는지_본다(client):
+    c, application = client
+    a, b, f = _send_mails(application.state.conn)
+    admin = {"Authorization": "Bearer demo-token-security"}
+    c.post(f"/mails/{a}/read")  # 팀 A 팀원이 읽음
+    readers = {r["account"]: r["read_at"] for r in c.get(f"/mails/{a}", headers=admin).json()["readers"]}
+    assert set(readers) == {"team_a_member", "security_admin"}  # 이 메일을 볼 수 있는 계정만
+    assert readers["team_a_member"] and readers["security_admin"] is None
+    assert [r["account"] for r in c.get(f"/mails/{f}", headers=admin).json()["readers"]] == ["security_admin"]
+    assert c.get(f"/mails/{a}").json()["readers"] is None  # 팀원에게는 읽음 현황 목록을 주지 않는다
+
+    done = c.post("/mails/read-all", headers=admin).json()
+    assert done["unread_count"] == 0 and all(m["read"] for m in done["mails"])
+    assert c.get("/mails", headers={"Authorization": "Bearer demo-token-team-b"}).json()["unread_count"] == 1

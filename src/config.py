@@ -44,7 +44,6 @@ class Settings:
 
     data_dir: Path
     db_path: Path
-    outbox_dir: Path
     trace_path: Path
     snapshot: str  # 사용할 취약점 스냅샷 시점: "T1" 또는 "T2"
     scan_interval_hours: float  # 스케줄러 주기
@@ -74,7 +73,6 @@ def get_settings() -> Settings:
     return Settings(
         data_dir=Path(os.environ.get("VULNWATCH_DATA_DIR", ROOT / "data")),
         db_path=Path(os.environ.get("VULNWATCH_DB_PATH", var_dir / "vulnwatch.db")),
-        outbox_dir=Path(os.environ.get("VULNWATCH_OUTBOX_DIR", ROOT / "outbox")),
         trace_path=Path(os.environ.get("VULNWATCH_TRACE_PATH", var_dir / "traces.jsonl")),
         snapshot=os.environ.get("VULNWATCH_SNAPSHOT", "T1").upper(),
         scan_interval_hours=_interval_from_env(),

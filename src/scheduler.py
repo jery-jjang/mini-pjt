@@ -47,9 +47,9 @@ def run_once(conn, llm=None, snapshot: str | None = None, loader=None) -> dict:
                 if reason:
                     to_alert[match["id"]] = {**match, "name": names[item["product"]], "reason": reason}
         if to_alert:
-            path = notifier.save_alert_mail(conn, project, list(to_alert.values()), settings.outbox_dir, llm=llm)
+            mail_id = notifier.save_alert_mail(conn, project, list(to_alert.values()), llm=llm)
             report["alerts"] += len(to_alert)
-            report["mails"].append({"project": project["id"], "file": path.name,
+            report["mails"].append({"project": project["id"], "mail_id": mail_id,
                                     "vulns": [{"id": a["id"], "reason": a["reason"]} for a in to_alert.values()]})
     return report
 
@@ -60,8 +60,7 @@ def _on_failure(conn, settings, error: str) -> dict:
     storage.set_meta(conn, FAILURES_KEY, failures)
     report = {"status": "failed", "error": error, "consecutive_failures": failures, "alerts": 0, "mails": []}
     if failures == settings.failure_notice_threshold:
-        path = notifier.save_failure_notice(conn, failures, error, settings.outbox_dir)
-        report["failure_notice"] = path.name
+        report["failure_notice"] = notifier.save_failure_notice(conn, failures, error)  # 메일 번호
     return report
 
 

@@ -25,7 +25,13 @@ CREATE TABLE IF NOT EXISTS findings (
     score REAL, score_source TEXT, kev INTEGER NOT NULL, PRIMARY KEY (project, vuln_id, product));
 CREATE TABLE IF NOT EXISTS alerts (
     id INTEGER PRIMARY KEY AUTOINCREMENT, project TEXT NOT NULL, vuln_id TEXT NOT NULL,
-    reason TEXT NOT NULL, score REAL, kev INTEGER NOT NULL, sent_at TEXT NOT NULL, file TEXT NOT NULL);
+    reason TEXT NOT NULL, score REAL, kev INTEGER NOT NULL, sent_at TEXT NOT NULL, file TEXT NOT NULL DEFAULT '',
+    mail_id INTEGER);
+CREATE TABLE IF NOT EXISTS mails (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, project TEXT, recipient TEXT NOT NULL,
+    subject TEXT NOT NULL, body TEXT NOT NULL, created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS mail_reads (
+    mail_id INTEGER NOT NULL, account TEXT NOT NULL, read_at TEXT NOT NULL, PRIMARY KEY (mail_id, account));
 CREATE TABLE IF NOT EXISTS item_removals (
     item_id INTEGER PRIMARY KEY, previous_status TEXT NOT NULL, removed_at TEXT NOT NULL, removed_by TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS alert_resets (
@@ -33,7 +39,7 @@ CREATE TABLE IF NOT EXISTS alert_resets (
 """
 
 TABLES = ["meta", "teams", "accounts", "projects", "products", "items", "mappings",
-          "pending_candidates", "findings", "alerts", "item_removals", "alert_resets"]
+          "pending_candidates", "findings", "alerts", "item_removals", "alert_resets", "mails", "mail_reads"]
 
 
 def connect(db_path) -> sqlite3.Connection:
@@ -43,7 +49,16 @@ def connect(db_path) -> sqlite3.Connection:
     conn = sqlite3.connect(path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
+    _migrate(conn)
     return conn
+
+
+def _migrate(conn) -> None:
+    """예전 DB 파일을 지금 구조에 맞춘다. 알림 이력에 메일 번호(mail_id) 열이 없으면 더한다."""
+    columns = {r["name"] for r in conn.execute("PRAGMA table_info(alerts)")}
+    if "mail_id" not in columns:
+        conn.execute("ALTER TABLE alerts ADD COLUMN mail_id INTEGER")
+        conn.commit()
 
 
 def reset_from_seed(conn: sqlite3.Connection, seed_path) -> None:
@@ -244,11 +259,62 @@ def last_alert(conn, project_id: str, vuln_id: str):
     return dict(row) | {"kev": bool(row["kev"])} if row else None
 
 
-def add_alert(conn, project_id: str, vuln_id: str, reason: str, score, kev: bool, sent_at: str, file: str) -> None:
-    """보낸 알림을 이력에 남긴다."""
-    conn.execute("INSERT INTO alerts (project, vuln_id, reason, score, kev, sent_at, file) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                 (project_id, vuln_id, reason, score, int(kev), sent_at, file))
+def add_alert(conn, project_id: str, vuln_id: str, reason: str, score, kev: bool, sent_at: str, mail_id: int) -> None:
+    """보낸 알림을 이력에 남긴다. mail_id는 이 알림을 담은 메일(mails 표)의 번호."""
+    conn.execute("INSERT INTO alerts (project, vuln_id, reason, score, kev, sent_at, file, mail_id) "
+                 "VALUES (?, ?, ?, ?, ?, ?, '', ?)",
+                 (project_id, vuln_id, reason, score, int(kev), sent_at, mail_id))
     conn.commit()
+
+
+def add_mail(conn, kind: str, project_id, recipient: str, subject: str, body: str, created_at: str) -> int:
+    """가짜 발송한 메일 한 통을 저장하고 번호를 돌려준다. kind는 alert 또는 scan_failure."""
+    cur = conn.execute("INSERT INTO mails (kind, project, recipient, subject, body, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                       (kind, project_id, recipient, subject, body, created_at))
+    conn.commit()
+    return cur.lastrowid
+
+
+def list_mails(conn, project_ids=None, include_system: bool = True) -> list[dict]:
+    """저장된 메일 목록(최근 것부터). project_ids를 주면 그 프로젝트 알림만,
+    include_system이 False면 프로젝트가 없는 메일(조회 실패 통지)은 뺀다."""
+    rows = [dict(r) for r in conn.execute("SELECT * FROM mails ORDER BY id DESC")]
+    if project_ids is not None:
+        rows = [r for r in rows if r["project"] in project_ids or (include_system and r["project"] is None)]
+    elif not include_system:
+        rows = [r for r in rows if r["project"] is not None]
+    return rows
+
+
+def get_mail(conn, mail_id: int) -> dict | None:
+    """메일 한 통. 없으면 None."""
+    row = conn.execute("SELECT * FROM mails WHERE id = ?", (mail_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def mark_read(conn, mail_id: int, account_id: str, read_at: str) -> str:
+    """이 계정 기준으로 메일을 읽음으로 표시한다. 이미 읽었으면 처음 읽은 시각을 그대로 두고 돌려준다."""
+    conn.execute("INSERT OR IGNORE INTO mail_reads VALUES (?, ?, ?)", (mail_id, account_id, read_at))
+    conn.commit()
+    return read_time(conn, mail_id, account_id)
+
+
+def read_time(conn, mail_id: int, account_id: str) -> str | None:
+    """이 계정이 메일을 읽은 시각. 안 읽었으면 None. 읽음 현황은 계정마다 따로다."""
+    row = conn.execute("SELECT read_at FROM mail_reads WHERE mail_id = ? AND account = ?",
+                       (mail_id, account_id)).fetchone()
+    return row["read_at"] if row else None
+
+
+def mail_readers(conn, mail_id: int) -> dict[str, str]:
+    """메일을 읽은 계정과 시각 {계정 ID: 읽은 시각}."""
+    return {r["account"]: r["read_at"] for r in conn.execute(
+        "SELECT account, read_at FROM mail_reads WHERE mail_id = ? ORDER BY read_at", (mail_id,))}
+
+
+def mail_vulns(conn, mail_id: int) -> list[str]:
+    """이 메일이 알린 취약점 ID 목록."""
+    return [r["vuln_id"] for r in conn.execute("SELECT vuln_id FROM alerts WHERE mail_id = ? ORDER BY id", (mail_id,))]
 
 
 def clear_pending(conn, account_id: str) -> None:
