@@ -72,7 +72,15 @@ def test_없는_스냅샷은_조회_실패로_알린다(tmp_path):
         sources.load_snapshot("T1", tmp_path)
 
 
-def test_LangSmith_추적은_항상_꺼진다():
+def test_테스트_중에는_LangSmith로_보내지_않는다():
     import os
-    config.get_settings()
     assert os.environ["LANGSMITH_TRACING"] == "false"
+    assert config.get_settings().langsmith_tracing is False
+    assert "LANGCHAIN_TRACING_V2" not in os.environ  # 예전 이름으로 켜지지 않는다
+
+
+def test_LangSmith_추적은_env_값을_따른다(monkeypatch):
+    monkeypatch.setenv("LANGSMITH_TRACING", "true")
+    assert config.get_settings().langsmith_tracing is True
+    monkeypatch.setenv("LANGSMITH_TRACING", "false")
+    assert config.get_settings().langsmith_tracing is False

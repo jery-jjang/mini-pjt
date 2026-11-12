@@ -38,6 +38,7 @@ class Session:
     searched: set = field(default_factory=set)  # 문서 검색으로 찾은 문서 ID
     denied: bool = False
     no_data: bool = False
+    run_id: str | None = None  # 이 요청의 실행 ID (LangSmith 기록과 로컬 기록을 잇는다)
     _retriever: VulnRetriever | None = None
 
     @property

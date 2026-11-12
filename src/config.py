@@ -11,9 +11,10 @@ ROOT = Path(__file__).resolve().parent.parent
 # .env의 비밀 값(AWS 키 등)을 환경 변수로 올린다. 값은 코드에 적지 않는다.
 load_dotenv(ROOT / ".env")
 
-# LangSmith 추적은 .env에 값이 있어도 항상 끈다. (외부로 대화 내용이 나가지 않게)
-os.environ["LANGSMITH_TRACING"] = "false"
-os.environ["LANGCHAIN_TRACING_V2"] = "false"
+# LangSmith 추적은 .env의 LANGSMITH_TRACING=true일 때만 켜진다(LangChain이 이 값을 직접 읽는다).
+# 모델에 보내는 글은 프로젝트명·팀명을 [프로젝트1] 같은 표시로 가린 뒤라, 추적에도 가린 글만 남는다.
+# 예전 이름(LANGCHAIN_TRACING_V2)으로 켜지는 일이 없도록 지운다.
+os.environ.pop("LANGCHAIN_TRACING_V2", None)
 
 
 def validate_interval(hours) -> float:
@@ -54,6 +55,7 @@ class Settings:
     live_lookup: bool  # 실시간 NVD/OSV 조회 여부 (PoC에서는 만들지 않는다)
     model_id: str
     region: str
+    langsmith_tracing: bool  # LangSmith 추적 여부 (.env의 LANGSMITH_TRACING)
 
 
 def _interval_from_env() -> float:
@@ -82,4 +84,5 @@ def get_settings() -> Settings:
         live_lookup=_flag("VULNWATCH_LIVE_LOOKUP", False),
         model_id=os.environ.get("VULNWATCH_MODEL_ID", "global.anthropic.claude-sonnet-4-5-20250929-v1:0"),
         region=os.environ.get("VULNWATCH_REGION", "us-east-1"),
+        langsmith_tracing=_flag("LANGSMITH_TRACING", False),
     )

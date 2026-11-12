@@ -65,6 +65,7 @@ def test_조회_질문은_도구_결과로_답하고_여섯_키를_채운다(con
     assert all(set(t) == {"step", "input", "output"} for t in res["trace"])
     record = json.loads((temp_paths / "traces.jsonl").read_text(encoding="utf-8").splitlines()[0])
     assert record["account"] == "team_a_member" and record["label"] == "answer"
+    assert len(record["run_id"]) == 36 and record["langsmith"] is False  # LangSmith 기록과 잇는 ID
 
 
 def test_모델에는_프로젝트명과_팀명이_가지_않는다(conn):

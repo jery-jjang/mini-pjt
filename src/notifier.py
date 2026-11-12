@@ -53,7 +53,8 @@ def summarize(items: list[dict], llm) -> dict[str, str]:
             llm = make_llm()
         text = "\n\n".join(f'[{i["id"]}] 제품: {i["name"]} {i["version"]}\n설명문: {i["description"][:DESCRIPTION_LENGTH]}'
                            for i in items)
-        result = (SUMMARY_PROMPT | llm.with_structured_output(AlertSummary)).invoke({"vulns": text})
+        result = (SUMMARY_PROMPT | llm.with_structured_output(AlertSummary)).invoke(
+            {"vulns": text}, config={"run_name": "vulnwatch-alert-summary", "tags": ["vulnwatch", "alert"]})
         summaries = {s.vuln_id.strip().upper(): s.summary.strip() for s in result.items if s.summary.strip()}
     except Exception:  # 요약 실패로 알림이 빠지면 안 된다
         summaries = {}

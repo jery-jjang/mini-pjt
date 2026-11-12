@@ -1,5 +1,6 @@
 """테스트 공통 준비. 실제 LLM과 외부 API는 부르지 않고, DB는 임시 경로에 만든다."""
 
+import os
 import sys
 from pathlib import Path
 
@@ -7,6 +8,9 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+
+# 테스트는 외부로 아무것도 보내지 않는다. .env보다 먼저 정해 두면 load_dotenv가 덮어쓰지 않는다.
+os.environ["LANGSMITH_TRACING"] = "false"
 
 from src import sources, storage  # noqa: E402
 

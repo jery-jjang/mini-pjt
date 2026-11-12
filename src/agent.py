@@ -7,6 +7,7 @@
 
 import json
 import re
+import uuid
 from datetime import datetime, timezone
 
 from langchain.agents import create_agent
@@ -131,8 +132,13 @@ def answer_question(conn, account: dict, question: str, llm=None) -> dict:
 
     agent = create_agent(llm, build_tools(session),
                          system_prompt=SYSTEM_PROMPT.format(role=ROLE_TEXT[account["role"]]))
+    # LangSmith 추적을 켜면 이 실행이 run_id로 남는다. 로컬 기록에도 같은 ID를 남겨 둘을 잇는다.
+    # 메타데이터에는 역할만 넣고 계정·팀·프로젝트 이름은 넣지 않는다.
+    run_id = uuid.uuid4()
     state = agent.invoke({"messages": [{"role": "user", "content": masked}]},
-                         config={"recursion_limit": 16})
+                         config={"recursion_limit": 16, "run_id": run_id, "run_name": "vulnwatch-query",
+                                 "tags": ["vulnwatch", "query"], "metadata": {"role": account["role"]}})
+    session.run_id = str(run_id)
     answer = masker.unmask(_message_text(state["messages"][-1]))
     label = decide_label(session)
     if label != "answer":
@@ -152,16 +158,19 @@ def answer_question(conn, account: dict, question: str, llm=None) -> dict:
         "cve_ids": [i for i in session.cve_ids if i in answer],
         "tools_called": session.tools_called,
     }
-    _write_trace(account, question, response)
+    _write_trace(account, question, response, session.run_id)
     return response
 
 
-def _write_trace(account: dict, question: str, response: dict) -> None:
-    """실행 기록을 로컬 파일(var/traces.jsonl)에 한 줄로 남긴다."""
-    path = get_settings().trace_path
+def _write_trace(account: dict, question: str, response: dict, run_id: str) -> None:
+    """실행 기록을 로컬 파일(var/traces.jsonl)에 한 줄로 남긴다. run_id로 LangSmith 기록과 이어진다."""
+    settings = get_settings()
+    path = settings.trace_path
     path.parent.mkdir(parents=True, exist_ok=True)
     record = {
         "time": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "run_id": run_id,
+        "langsmith": settings.langsmith_tracing,
         "account": account["id"],
         "question": question,
         "label": response["label"],
