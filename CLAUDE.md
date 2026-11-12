@@ -6,7 +6,7 @@
 
 ## PoC 범위
 
-- 만든다: 등록, 해당 여부 조회, 현황 조회, 취약점 설명문 검색, 거절, 주기 검색과 알림(파일 저장).
+- 만든다: 등록, 해당 여부 조회, 현황 조회, 취약점 설명문 검색, 거절, 주기 검색과 알림(DB 저장).
 - 만들지 않는다: 오탐 교정(3차), 실시간 NVD/OSV 조회, 실제 메일 발송, 로그인 화면. 계정은 고정 토큰 3개(팀 A 팀원, 팀 B 팀원, 보안 담당자)로 대신한다.
 
 ## 기술 스택
@@ -34,6 +34,7 @@ python -m venv .venv                      가상환경 만들기 (처음 한 번
 .venv\Scripts\python evaluation/run_ragas.py --round 1   RAGAS 지표 (run_eval 뒤에 실행. 설치 방법은 requirements.txt 아래쪽)
 .venv\Scripts\python -m src.scheduler --snapshot T2      검색 1회 실행 (시연용)
 .venv\Scripts\python -m src.storage --load-demo          로컬 DB에 시연용 등록 항목 추가 (평가 뒤 다시 실행)
+.venv\Scripts\python -m src.notifier --list             DB에 저장된 알림 메일 목록 (--show N 으로 본문)
 ```
 
 ## 폴더 구조 (제출 규약. 바꾸지 않는다)
@@ -59,7 +60,6 @@ data/                 취약점 스냅샷(1차·2차 시점), 초기 시드 데�
 evaluation/           test_queries.csv, 채점 스크립트 run_eval.py, RAGAS 스크립트 run_ragas.py, round1_report.md, round2_report.md
 tests/                pytest (가짜 모델 주입, 실제 LLM 호출 없음)
 var/                  실행 중 만들어지는 SQLite 파일과 traces.jsonl (커밋하지 않는다)
-outbox/               저장된 알림 메일 파일 (커밋하지 않는다)
 web/                  로컬 화면 (빌드 없는 HTML·CSS·JS. 서버가 /ui에서 내준다. 사용자 요청으로 2026-11-12에 더함)
 ```
 
@@ -127,7 +127,7 @@ web/                  로컬 화면 (빌드 없는 HTML·CSS·JS. 서버가 /ui�
 - 함수와 도구에는 한국어 docstring을 쓰고, 주석도 한국어로 쓴다.
 - 비밀 값은 `.env`에서 읽고 코드에 적지 않는다. `.env`는 커밋하지 않는다.
 - 모델은 모듈 최상단에서 만들지 않는다. 함수 안에서 만들고 `llm=None` 인자로 가짜 모델을 주입할 수 있게 한다.
-- `tests/`의 테스트는 실제 LLM과 외부 API를 호출하지 않는다. SQLite와 메일 파일은 임시 경로에 만든다.
+- `tests/`의 테스트는 실제 LLM과 외부 API를 호출하지 않는다. SQLite는 임시 경로에 만든다.
 - 더미 데이터 파일에는 "교육용 더미 데이터입니다"를 명시한다.
 
 ## 반드시 지킬 동작 규칙
@@ -140,7 +140,10 @@ web/                  로컬 화면 (빌드 없는 HTML·CSS·JS. 서버가 /ui�
 - 점수는 NVD 우선, 없으면 CNA/OSV, 둘 다 없으면 '점수 미정'. GHSA 별칭은 연결된 CVE ID로 통일한다.
 - 근거 문서 본문에는 제목 줄 다음, 점수 줄 위에 `참고 링크:` 줄을 둔다. 링크는 `src/sources.py`의 일반 코드가 취약점 ID로 만든다(LLM이 만들지 않는다). NVD `https://nvd.nist.gov/vuln/detail/{CVE}`(CVE일 때), OSV `https://osv.dev/vulnerability/{ID}`(항상), GitHub Advisory `https://github.com/advisories/{GHSA}`(GHSA 별칭이 있을 때), CISA KEV `https://www.cisa.gov/known-exploited-vulnerabilities-catalog`(KEV 등재일 때). 교육용 가상 항목(`synthetic`)에는 링크를 붙이지 않는다. 벤더 공지 링크는 넣지 않는다.
 - `contexts` 항목 형식(`doc_id`, `text`)은 바꾸지 않는다. 링크는 `text` 안의 `참고 링크:` 줄로만 싣고, 답변 문장에는 넣지 않는다. 화면은 이 줄을 읽어 링크로 보여 준다.
-- 알림은 기본으로 메일 내용을 파일에 저장한다. 요약에는 CVE ID, 점수 또는 KEV 여부, 제품과 버전을 넣는다.
+- 알림은 메일 내용을 SQLite의 `mails` 표에 저장한다(가짜 발송. 파일로 쓰지 않는다). 종류는 `alert`(프로젝트 알림)와 `scan_failure`(조회 연속 실패 통지)이고, 받는 사람·제목·본문·시각을 남긴다. 알림 이력(`alerts`)은 `mail_id`로 메일을 가리킨다. 요약에는 CVE ID, 점수 또는 KEV 여부, 제품과 버전을 넣는다. (2026-11-12 사용자 요청으로 `outbox/` 파일 저장을 DB 저장으로 바꿨다)
+- 저장된 메일은 명령(`python -m src.notifier --list`, `--show N`)과 화면 '알림함'으로 본다. 알림함 API: `GET /mails`(목록), `GET /mails/{mail_id}`(본문). 팀원은 자기 팀 프로젝트의 알림만, 보안 담당자는 조회 실패 통지를 포함해 전체를 본다. 받는 주소는 보안 담당자에게만 준다. 권한은 코드가 확인하고, 모르는 토큰 401, 볼 수 없거나 없는 메일 404.
+- 읽음 현황은 계정(권한)마다 따로 관리한다(`mail_reads`: 메일 번호, 계정, 읽은 시각). 한 계정이 읽어도 다른 계정에는 안 읽음으로 남는다. `GET /mails`는 메일마다 `read`, `read_at`과 `unread_count`를 준다. 읽음 표시는 `POST /mails/{mail_id}/read`, `POST /mails/read-all`로 하고, 조회(`GET`)만으로는 읽음 처리하지 않는다. 보안 담당자는 `GET /mails/{mail_id}`의 `readers`로 그 메일을 볼 수 있는 계정마다 읽었는지와 읽은 시각을 본다.
+- 화면 알림함 버튼에 안 읽은 메일 수를 배지로 보이고, 목록의 안 읽은 메일에 N 표시를 붙인다. 메일을 열면 그 계정 기준으로 읽음이 된다.
 - `data/`의 오프라인 스냅샷만 쓴다. 실시간 NVD/OSV 조회와 실제 메일 발송은 이번 PoC에서 만들지 않는다. 설정 항목(`live_lookup`, `send_real_mail`)은 자리만 있고, 실시간 조회를 켜면 만들지 않았다는 오류를 낸다.
 - 스케줄러 주기(기본 6시간), 연속 실패 통지 횟수(기본 2회), 알림 기준 점수(기본 9.0)는 `src/config.py`의 설정값으로 둔다.
 - 검색 주기는 서버 재시작 없이 바꿀 수 있어야 한다. 바꾼 값은 SQLite에 저장해 재시작 뒤에도 쓰고, `.env` 값은 저장값이 없을 때만 쓴다. 다음 검색은 바꾼 시각 + 새 주기다. 0 이하는 `config.validate_interval`로 막는다(`.env`에 있으면 서버가 뜨지 않는다).
