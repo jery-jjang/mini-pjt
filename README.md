@@ -94,11 +94,17 @@ python -m venv .venv
 .venv\Scripts\python -m src.scheduler --snapshot T2        검색 1회 실행 (알림 메일은 outbox/에 저장)
 ```
 
-질문 보내기:
+질문 보내기. 가장 쉬운 방법은 브라우저에서 `http://127.0.0.1:8000/docs`를 열어 `POST /query`를 실행하는 것입니다. PowerShell에서는 아래처럼 보냅니다.
 
+```powershell
+$body = [Text.Encoding]::UTF8.GetBytes('{"question": "Log4j 2.14.1에 해당하는 취약점이 뭐야?"}')
+$r = Invoke-RestMethod -Uri http://127.0.0.1:8000/query -Method Post -ContentType "application/json" -Body $body
+$r.answer
 ```
-curl -X POST http://127.0.0.1:8000/query -H "Content-Type: application/json" -d "{\"question\": \"Log4j 2.14.1에 해당하는 취약점이 뭐야?\"}"
-```
+
+다른 계정으로 보낼 때는 `-Headers @{ Authorization = "Bearer demo-token-team-b" }`를 더합니다.
+
+Windows에서 `curl -d "{...한글...}"`처럼 한글 질문을 명령줄에 직접 쓰면 인코딩이 깨져 서버가 400으로 거부합니다. `curl`을 쓰려면 질문을 UTF-8 파일로 저장해 `--data-binary @파일`로 보냅니다.
 
 계정은 `Authorization` 헤더의 토큰으로 바꿉니다. 헤더가 없으면 팀 A 팀원입니다.
 

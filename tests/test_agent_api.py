@@ -139,6 +139,7 @@ def test_API는_question만_받아_여섯_키로_답한다(client):
     res = c.post("/query", json={"question": "우리 프로젝트 현황"})
     assert res.status_code == 200 and set(res.json()) == KEYS
     assert res.json()["label"] == "answer"
+    assert res.headers["content-type"] == "application/json; charset=utf-8"  # 한글이 깨지지 않게 인코딩을 밝힌다
 
 
 def test_API_토큰에_따라_계정이_달라진다(client):

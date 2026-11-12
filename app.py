@@ -3,6 +3,7 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Header, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from src import agent, auth, scheduler, storage
@@ -26,7 +27,13 @@ async def lifespan(app: FastAPI):
     conn.close()
 
 
-app = FastAPI(title="VulnWatch", lifespan=lifespan)
+class UTF8JSONResponse(JSONResponse):
+    """응답 헤더에 문자 인코딩을 밝힌다. (PowerShell 같은 클라이언트에서 한글이 깨지지 않게)"""
+
+    media_type = "application/json; charset=utf-8"
+
+
+app = FastAPI(title="VulnWatch", lifespan=lifespan, default_response_class=UTF8JSONResponse)
 
 
 class QueryRequest(BaseModel):
