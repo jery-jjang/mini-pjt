@@ -1,4 +1,4 @@
-"""API 진입점 (FastAPI). POST /query와, UI가 쓰는 주기 검색 설정 API."""
+"""API 진입점 (FastAPI). POST /query와, UI가 쓰는 등록 목록·주기 검색 설정 API, 화면 파일(/ui)."""
 
 import logging
 from contextlib import asynccontextmanager
@@ -7,12 +7,13 @@ from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from pydantic import BaseModel, Field
 
 from src import agent, auth, scheduler, storage
-from src.config import get_settings
+from src.config import ROOT, get_settings
 
 
 @asynccontextmanager
@@ -87,6 +88,31 @@ class SettingsResponse(BaseModel):
     next_run_at: str | None
 
 
+class ItemOut(BaseModel):
+    """프로젝트에 등록된 SW 항목."""
+
+    raw_text: str  # 사용자가 등록할 때 쓴 문장
+    product: str | None  # 확정된 표준 제품 이름. 매핑이 확정되지 않았으면 None
+    version: str | None
+    monitored: bool  # 매핑이 확정돼 감시 중인지. False면 '감시 불가'
+
+
+class ProjectOut(BaseModel):
+    """계정이 볼 수 있는 프로젝트와 등록 항목."""
+
+    id: str
+    name: str
+    team: str
+    items: list[ItemOut]
+
+
+class ProjectsResponse(BaseModel):
+    """요청한 계정과, 그 계정이 볼 수 있는 프로젝트 목록."""
+
+    account: dict
+    projects: list[ProjectOut]
+
+
 def _account(authorization: str | None) -> dict:
     """요청한 계정을 찾는다. 모르는 토큰이면 401."""
     try:
@@ -131,6 +157,26 @@ def query(body: QueryRequest, authorization: str | None = Header(default=None)):
         raise _model_error(exc) from None
 
 
+@app.get("/projects", response_model=ProjectsResponse)
+def read_projects(authorization: str | None = Header(default=None)):
+    """요청한 계정이 볼 수 있는 프로젝트와 등록된 SW 목록. 팀원은 자기 팀, 보안 담당자는 전체를 본다.
+
+    모델을 부르지 않는 읽기 전용 조회다. 알림 수신 주소는 돌려주지 않는다.
+    """
+    conn = app.state.conn
+    account = _account(authorization)
+    teams = {r["id"]: r["name"] for r in conn.execute("SELECT id, name FROM teams").fetchall()}
+    names = {p["key"]: p["name"] for p in storage.list_products(conn)}
+    projects = []
+    for p in auth.accessible_projects(conn, account):
+        items = [{"raw_text": i["raw_text"], "product": names.get(i["product"]) if i["product"] else None,
+                  "version": i["version"], "monitored": i["status"] == "confirmed"}
+                 for i in storage.list_items(conn, p["id"])]
+        projects.append({"id": p["id"], "name": p["name"], "team": teams.get(p["team"], p["team"]), "items": items})
+    return {"account": {"id": account["id"], "name": account["name"], "role": account["role"]},
+            "projects": projects}
+
+
 @app.get("/settings", response_model=SettingsResponse)
 def read_settings():
     """주기 검색 설정(주기, 사용 여부, 마지막·다음 검색 시각)을 본다. 누구나 볼 수 있다."""
@@ -153,3 +199,14 @@ def change_scan_interval(body: IntervalRequest, authorization: str | None = Head
     if app.state.scheduler:
         app.state.scheduler.set_interval(hours)
     return _settings_status()
+
+
+# ---------------- 화면 (로컬 UI) ----------------
+# 빌드 없는 정적 파일(web/)을 /ui에서 내준다. 같은 주소에서 API를 부르므로 CORS 설정이 필요 없다.
+app.mount("/ui", StaticFiles(directory=ROOT / "web", html=True), name="ui")
+
+
+@app.get("/", include_in_schema=False)
+def home():
+    """첫 주소로 오면 화면으로 보낸다."""
+    return RedirectResponse(url="/ui/")

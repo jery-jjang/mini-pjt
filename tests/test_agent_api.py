@@ -222,6 +222,40 @@ def test_API_토큰에_따라_계정이_달라진다(client):
     assert res.json()["label"] == "guardrail"
 
 
+@pytest.mark.parametrize("token, names", [
+    (None, ["결제 API", "사내 포털"]),  # 토큰이 없으면 기본 계정(팀 A 팀원)
+    ("demo-token-team-b", ["배치 서버"]),
+    ("demo-token-security", ["결제 API", "사내 포털", "배치 서버"]),
+])
+def test_API_등록_목록은_계정이_볼_수_있는_프로젝트만_준다(client, token, names):
+    c, _ = client
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    res = c.get("/projects", headers=headers)
+    assert res.status_code == 200
+    body = res.json()
+    assert sorted(p["name"] for p in body["projects"]) == sorted(names)
+    assert "alert_email" not in res.text and "@" not in res.text  # 알림 수신 주소는 내주지 않는다
+    items = [i for p in body["projects"] for i in p["items"]]
+    assert items and all(set(i) == {"raw_text", "product", "version", "monitored"} for i in items)
+
+
+def test_API_등록_목록은_감시_불가_항목을_표시하고_모르는_토큰은_401(client):
+    c, _ = client
+    portal = next(p for p in c.get("/projects").json()["projects"] if p["name"] == "사내 포털")
+    assert any(not i["monitored"] for i in portal["items"])
+    assert c.get("/projects", headers={"Authorization": "Bearer wrong"}).status_code == 401
+
+
+def test_화면은_ui에서_열린다(client):
+    c, _ = client
+    page = c.get("/ui/")
+    assert page.status_code == 200 and "text/html" in page.headers["content-type"]
+    assert "VulnWatch" in page.text
+    assert c.get("/ui/app.js").status_code == 200
+    first = c.get("/", follow_redirects=False)
+    assert first.status_code in (302, 307) and first.headers["location"] == "/ui/"
+
+
 class FailingModel(BaseChatModel):
     """Bedrock 호출 오류를 흉내 내는 가짜 모델."""
 

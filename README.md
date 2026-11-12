@@ -105,8 +105,8 @@ VULNWATCH_REGION=us-east-1
 모델 ID를 적지 않아도 Amazon Nova Pro(`us.amazon.nova-pro-v1:0`)를 씁니다. 아래 평가 결과(1차·2차 통과율, LLM 채점, RAGAS)는 모두 Nova Pro로 낸 것입니다. 모델을 바꾸면 도구 선택이 달라져 결과가 달라질 수 있습니다.
 
 ```
-.venv\Scripts\python -m uvicorn app:app                    서버 실행 (http://127.0.0.1:8000)
-.venv\Scripts\python -m pytest tests -q                    자동 테스트 143건 (실제 LLM 호출 없음)
+.venv\Scripts\python -m uvicorn app:app                    서버 실행. 화면은 http://127.0.0.1:8000/ui/
+.venv\Scripts\python -m pytest tests -q                    자동 테스트 148건 (실제 LLM 호출 없음)
 .venv\Scripts\python evaluation/run_eval.py --round 1      인-아웃 세트 25건 평가 (실제 Bedrock 호출)
 .venv\Scripts\python evaluation/run_ragas.py --round 1     RAGAS 지표 (설치 방법은 requirements.txt 아래쪽)
 .venv\Scripts\python -m src.scheduler --snapshot T2        검색 1회 실행 (알림 메일은 outbox/에 저장)
@@ -145,7 +145,23 @@ Invoke-RestMethod http://127.0.0.1:8000/settings/scan-interval -Method Put -Cont
 - **0 이하나 숫자가 아닌 값은 422**로 거부하고 주기를 바꾸지 않습니다. 팀원 토큰이나 토큰 없이 요청하면 403, 모르는 토큰은 401입니다.
 - 주기는 모든 팀의 프로젝트에 한꺼번에 적용되어 보안 담당자만 바꿀 수 있게 했습니다.
 
-질문 보내기. 가장 쉬운 방법은 브라우저에서 `http://127.0.0.1:8000/docs`를 열어 `POST /query`를 실행하는 것입니다. PowerShell에서는 아래처럼 보냅니다.
+### 화면 (로컬 UI)
+
+서버를 띄운 뒤 브라우저에서 `http://127.0.0.1:8000/ui/`를 엽니다(`http://127.0.0.1:8000/`도 이 화면으로 갑니다). 서버가 `web/`의 정적 파일을 내주므로 따로 설치하거나 빌드할 것이 없습니다.
+
+- **계정**: 상단에서 팀 A 팀원, 팀 B 팀원, 보안 담당자 중 하나를 고릅니다. 로그인 화면 대신 데모 토큰 3개를 고르는 방식입니다.
+- **등록된 SW**: 고른 계정이 볼 수 있는 프로젝트와 등록 항목을 보여 줍니다. 팀원은 자기 팀, 보안 담당자는 전체를 봅니다. 매핑이 확정되지 않은 항목은 '감시 불가'로 표시하고, 등록을 확정하면 목록이 바로 갱신됩니다.
+- **질문**: 질문을 보내면 답변과 라벨(답변, 확인할 수 없음, 거절)을 보여 줍니다. 등록 후보가 나오면 번호 버튼으로 확정합니다. 오류(401, 422, 429, 503)는 이유를 대화 안에 보여 줍니다.
+- **응답 상세**: 답변을 누르면 답에 나온 취약점, 호출한 도구, 근거 문서(`contexts`), 실행 기록(`trace`)을 펼쳐 봅니다.
+- **검색 주기**: 상단의 검색 주기를 누르면 주기와 마지막·다음 검색 시각을 보고, 보안 담당자는 주기를 바꿀 수 있습니다.
+
+화면이 쓰는 등록 목록 API:
+
+| 요청 | 권한 | 내용 |
+|---|---|---|
+| `GET /projects` | 토큰 기준(없으면 팀 A 팀원) | 계정이 볼 수 있는 프로젝트와 등록 항목(입력 문장, 표준 제품 이름, 버전, 감시 여부). 알림 수신 주소는 주지 않습니다. 모르는 토큰은 401 |
+
+질문을 API로 직접 보낼 수도 있습니다. 브라우저에서 `http://127.0.0.1:8000/docs`를 열어 `POST /query`를 실행하거나, PowerShell에서는 아래처럼 보냅니다.
 
 ```powershell
 $body = [Text.Encoding]::UTF8.GetBytes('{"question": "Log4j 2.14.1에 해당하는 취약점이 뭐야?"}')

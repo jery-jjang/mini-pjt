@@ -28,7 +28,7 @@
 ```
 python -m venv .venv                      가상환경 만들기 (처음 한 번)
 .venv\Scripts\python -m pip install -r requirements.txt   의존성 설치
-.venv\Scripts\python -m uvicorn app:app   서버 실행
+.venv\Scripts\python -m uvicorn app:app   서버 실행 (화면은 http://127.0.0.1:8000/ui/)
 .venv\Scripts\python -m pytest tests -q   배선 테스트 (실제 LLM 호출 없음)
 .venv\Scripts\python evaluation/run_eval.py --round 1    30건 평가 (실제 Bedrock 호출)
 .venv\Scripts\python evaluation/run_ragas.py --round 1   RAGAS 지표 (run_eval 뒤에 실행. 설치 방법은 requirements.txt 아래쪽)
@@ -43,7 +43,7 @@ CLAUDE.md             이 문서
 README.md             산출물 규약의 README 틀을 따른다 (활용 패턴, 아키텍처, 실행 방법, 평가 결과, 통과율, 회고, 핵심 코드 위치)
 requirements.txt      의존성
 .gitignore            .venv/, var/, outbox/, .env, .claude, .ouroboros 제외
-app.py                POST /query 진입점 (FastAPI)
+app.py                POST /query 진입점 (FastAPI). 등록 목록·설정 API와 화면 파일(/ui)도 내준다
 src/agent.py          메인 에이전트 그래프
 src/tools.py          도메인 도구 (등록, 조회, 문서 검색, 감시)
 src/retriever.py      RAG 파이프라인 (취약점 설명문 검색)
@@ -59,6 +59,7 @@ evaluation/           test_queries.csv, 채점 스크립트 run_eval.py, RAGAS �
 tests/                pytest (가짜 모델 주입, 실제 LLM 호출 없음)
 var/                  실행 중 만들어지는 SQLite 파일과 traces.jsonl (커밋하지 않는다)
 outbox/               저장된 알림 메일 파일 (커밋하지 않는다)
+web/                  로컬 화면 (빌드 없는 HTML·CSS·JS. 서버가 /ui에서 내준다. 사용자 요청으로 2026-11-12에 더함)
 ```
 
 ## 주고받는 형식 (제출 규약)
@@ -80,6 +81,8 @@ outbox/               저장된 알림 메일 파일 (커밋하지 않는다)
 - 등록은 두 번의 요청으로 이뤄진다. 첫 요청에서 후보 1~3개를 제시하고 계정별 '대기 중인 후보'를 SQLite에 저장한다. 같은 계정의 다음 요청("1번으로 확정")이 그 후보를 확정한다. 요청 형식은 바꾸지 않는다.
 - 프로젝트와 프로젝트별 알림 수신 주소는 `data/`의 초기 시드에 넣어 둔다. 대화로 프로젝트를 새로 만드는 기능은 만들지 않는다.
 - UI용 설정 API: `GET /settings`(누구나)는 `scan_interval_hours`, `scheduler_enabled`, `last_run_at`, `next_run_at`을 돌려준다. `PUT /settings/scan-interval`(보안 담당자만, 본문 `{"hours": 숫자}`)은 검색 주기를 바꾸고 같은 형식으로 돌려준다. 팀원·토큰 없음은 403, 모르는 토큰은 401, 0 이하나 숫자가 아닌 값은 422.
+- UI용 등록 목록 API: `GET /projects`는 토큰 기준(없으면 기본 계정)으로 볼 수 있는 프로젝트와 등록 항목(`raw_text`, `product`, `version`, `monitored`)을 돌려준다. 알림 수신 주소는 주지 않는다. 모르는 토큰은 401.
+- 화면(`web/`)은 로컬에서만 쓴다. 계정은 상단에서 데모 토큰 3개 중 고르는 방식이고 로그인 화면은 만들지 않는다.
 
 ## 인-아웃 세트 형식 (제출 규약)
 
