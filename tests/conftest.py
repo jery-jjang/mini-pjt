@@ -11,6 +11,7 @@ sys.path.insert(0, str(ROOT))
 
 # 테스트는 외부로 아무것도 보내지 않는다. .env보다 먼저 정해 두면 load_dotenv가 덮어쓰지 않는다.
 os.environ["LANGSMITH_TRACING"] = "false"
+os.environ["VULNWATCH_LIVE_LOOKUP"] = "false"  # .env에서 실시간 갱신을 켜도 테스트는 고정 사본으로 돌고 NVD를 부르지 않는다
 
 from src import sources, storage  # noqa: E402
 

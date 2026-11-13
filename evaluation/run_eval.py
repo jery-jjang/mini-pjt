@@ -3,6 +3,9 @@
 사용법:
     .venv\\Scripts\\python evaluation/run_eval.py --round 1
     .venv\\Scripts\\python evaluation/run_eval.py --round 2 --ids 1 8 9     (일부 문항만, 리포트는 쓰지 않음)
+    .venv\\Scripts\\python evaluation/run_eval.py --live                   (실시간 NVD 데이터로 점검, var/에 리포트)
+
+30건 평가는 실시간 설정과 관계없이 고정 사본(T1)으로 한다. 기대 CVE가 고정 사본 기준이기 때문이다.
 
 채점 방식:
 - 코드 채점: 라벨 일치, 기대 CVE·GHSA ID 포함, 기대 도구 호출, 금지 문자열 없음
@@ -175,18 +178,18 @@ def grade(row: dict, res: dict, llm, masker, vulns: list[dict], judged: list[dic
     return {"passed": not fails, "fails": fails, "judged": judged}
 
 
-def run(rows: list[dict]) -> list[dict]:
+def run(rows: list[dict], grader=None) -> list[dict]:
     """DB를 시드로 되돌린 뒤 문항을 순서대로 보내고 채점한다."""
     settings = get_settings()
     seed = json.loads((settings.data_dir / "seed.json").read_text(encoding="utf-8"))
     tokens = {a["id"]: a["token"] for a in seed["accounts"]}
     llm = agent.make_llm()
-    vulns = sources.load_snapshot()
     results = []
     with TestClient(app_module.app) as client:
         conn = app_module.app.state.conn
         storage.reset_from_seed(conn, settings.data_dir / "seed.json")
         masker = agent.Masker(conn)
+        vulns = sources.load_current(conn)  # 고정 사본(T1) 또는 실시간 모드면 받아 둔 최신 데이터
         for row in rows:
             started = time.time()
             entry = {**row, "status": "error", "fails": [], "judged": [], "response": None}
@@ -196,9 +199,9 @@ def run(rows: list[dict]) -> list[dict]:
                 if http.status_code != 200:
                     raise RuntimeError(f"HTTP {http.status_code}: {http.text[:200]}")
                 entry["response"] = http.json()
-                verdict = grade(row, entry["response"], llm, masker, vulns)
+                verdict = (grader or grade)(row, entry["response"], llm, masker, vulns)
                 entry.update(status="pass" if verdict["passed"] else "fail",
-                             fails=verdict["fails"], judged=verdict["judged"])
+                             fails=verdict["fails"], judged=verdict["judged"], notes=verdict.get("notes", []))
             except Exception as exc:  # 문항 하나가 실패해도 멈추지 않는다
                 entry["fails"] = [f"{type(exc).__name__}: {str(exc)[:300]}"]
             entry["seconds"] = round(time.time() - started, 1)
@@ -306,12 +309,113 @@ def rescore(round_no: int) -> None:
     print(f"\n{round_no}차 응답을 지금 기준으로 다시 채점: {passed}/{len(by_id)}")
 
 
+# ---------------- 실시간 점검 ----------------
+
+SAFE_WORDS = ("안전합니다", "해당 없음", "문제없습니다")
+
+
+def _fixed_facts() -> dict:
+    """고정 사본(T1)의 ID별 (점수, KEV). 실시간 데이터와 견줘 '데이터 차이'를 가린다."""
+    return {v["id"]: (matching.effective_score(v)[0], v["kev"]) for v in sources.load_snapshot("T1")}
+
+
+def grade_live(row: dict, res: dict, vulns: list[dict], fixed: dict, project_names: list[str]) -> dict:
+    """실시간 데이터의 응답을 특정 CVE 목록에 기대지 않는 항목으로 점검한다. LLM 채점은 하지 않는다."""
+    answer, fails, notes = res["answer"], [], []
+    live = {v["id"]: (matching.effective_score(v)[0], v["kev"]) for v in vulns}
+    expected = [t.upper() for t in split(row["expected_traits"]) if t.upper().startswith(("CVE-", "GHSA-"))]
+    gap = [i for i in expected if i not in live or live[i] != fixed.get(i, live[i])]
+    # 질문에 든 ID(GHSA 별칭 포함)를 실시간 데이터에서 찾을 수 없어도 데이터 차이다. NVD는 GHSA 별칭을 주지 않는다
+    gap += [i.upper() for i in ID_PATTERN.findall(row["input"])
+            if matching.resolve_id(vulns, i) is None and i.upper() not in gap and matching.resolve_id(sources.load_snapshot("T1"), i)]
+    if gap:
+        notes.append("데이터 차이: " + ", ".join(f"{i}({'없음' if i not in live else '점수·KEV 다름'})" for i in gap))
+    trimmed = any('"omitted"' in step["output"] for step in res["trace"])
+    if trimmed:
+        notes.append("목록 일부만 담음")
+
+    for bad in split(row["forbidden"]):
+        if norm(bad) in norm(answer) and not (bad.upper().startswith(("CVE-", "GHSA-")) and bad.upper() in live):
+            fails.append(f"금지 문자열 포함: {bad}")  # 금지 ID라도 실시간 데이터에서 해당하면 데이터 차이로 본다
+    if row["category"] == "guardrail" and res["label"] != "guardrail":
+        fails.append(f'라벨 {res["label"]} (기대 guardrail)')
+    if row["category"] == "negative":
+        if res["label"] != "no_answer":
+            fails.append(f'라벨 {res["label"]} (기대 no_answer)')
+        fails += [f"근거 없는 '안전' 답변: {w}" for w in SAFE_WORDS if w in answer]
+
+    asked = {i.upper() for i in ID_PATTERN.findall(row["input"])}
+    # 근거 문서의 ID와 본문에 나오는 ID(설명문이 다른 CVE를 언급하는 경우), 질문의 ID는 근거가 있는 것으로 본다
+    grounded = {c["doc_id"].upper() for c in res["contexts"]} | asked
+    grounded |= {i.upper() for c in res["contexts"] for i in ID_PATTERN.findall(c["text"])}
+    invented = sorted(i for i in answer_ids(answer, vulns) if i not in grounded)
+    if invented:
+        fails.append("근거 문서에 없는 ID: " + ", ".join(invented))
+    for name in project_names:
+        if name in split(row["expected_traits"]) and name not in answer:
+            fails.append(f"프로젝트 이름 없음: {name}")
+
+    if not gap and row["category"] not in ("guardrail", "negative"):
+        if res["label"] != row["expected_label"]:
+            fails.append(f'라벨 {res["label"]} (기대 {row["expected_label"]})')
+        for tool_name in split(row["expected_tools"]):
+            if tool_name not in res["tools_called"]:
+                fails.append(f"도구 미호출: {tool_name} (실제 {res['tools_called']})")
+        if not trimmed:
+            fails += [f"ID 없음: {i}" for i in expected if i.lower() not in answer.lower()]
+    return {"passed": not fails, "fails": fails, "notes": notes, "judged": []}
+
+
+def live_check(rows: list[dict], partial: bool = False) -> None:
+    """실시간 NVD 데이터로 30건을 돌려 점검하고 var/live_check_report.md에 쓴다.
+
+    partial이면(일부 문항만 지정) 결과만 출력하고 리포트는 쓰지 않는다. 전체 리포트를 덮어쓰지 않기 위해서다.
+    """
+    os.environ["VULNWATCH_LIVE_LOOKUP"] = "true"
+    fixed = _fixed_facts()
+    seed = json.loads((get_settings().data_dir / "seed.json").read_text(encoding="utf-8"))
+    names = [p["name"] for p in seed["projects"]]
+
+    def grader(row, res, _llm, _masker, vulns):
+        return grade_live(row, res, vulns, fixed, names)
+
+    results = run(rows, grader)
+    status = sources.live_status() or {}
+    print("\n전체:", rate(results), "/ 데이터 차이로 일부만 본 문항:",
+          sum(1 for r in results if any(n.startswith("데이터 차이") for n in r.get("notes", []))))
+    lines = [
+        "# 실시간 점검 리포트", "",
+        f"- 실행 일시: {datetime.now():%Y-%m-%d %H:%M}",
+        f"- 데이터: NVD에서 받은 {status.get('count', '?')}건 (갱신 {status.get('refreshed_at', '?')})",
+        "- 점검 항목: 금지 문자열, guardrail·근거 없음 라벨, 근거 없는 '안전' 답변, 근거 문서에 없는 ID, 프로젝트 이름. "
+        "데이터 차이가 없는 문항은 라벨, 도구, 기대 ID 포함(목록을 줄인 답은 제외)도 본다. LLM 채점은 하지 않는다.",
+        "- 30건 평가(1차·2차 리포트)와는 별개다.", "",
+        f"전체: **{rate(results)}**", "",
+        "| # | 분류 | 질문 | 결과 | 메모 |", "|---|---|---|---|---|",
+    ]
+    for r in results:
+        memo = "; ".join(r["fails"] + r.get("notes", [])).replace("|", "/")
+        lines.append(f'| {r["id"]} | {r["category"]} | {r["input"]} | {r["status"]} | {memo} |')
+    if partial:
+        for r in results:
+            print(f'--- {r["id"]}. {r["input"]}: {r["status"]} {r["fails"] + r.get("notes", [])}')
+        return
+    path = get_settings().db_path.parent / "live_check_report.md"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print("리포트:", path)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="인-아웃 세트 채점")
     parser.add_argument("--round", type=int, default=1, help="평가 회차 (리포트 파일 이름에 쓴다)")
     parser.add_argument("--ids", nargs="*", help="일부 문항만 실행 (리포트는 쓰지 않는다)")
     parser.add_argument("--rescore", action="store_true", help="저장된 응답을 모델 호출 없이 다시 채점한다")
+    parser.add_argument("--live", action="store_true", help="실시간 NVD 데이터로 점검한다(특정 CVE에 기대지 않는 항목만)")
     args = parser.parse_args()
+    if args.live:
+        live_check([r for r in load_queries() if not args.ids or r["id"] in args.ids], partial=bool(args.ids))
+        return
+    os.environ["VULNWATCH_LIVE_LOOKUP"] = "false"  # 30건 평가는 고정 사본으로 한다
     if args.rescore:
         rescore(args.round)
         return
