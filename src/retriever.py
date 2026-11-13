@@ -203,6 +203,14 @@ class VulnRetriever:
             if len(picked) >= k:
                 break
             self._add(picked, self.docs[i]["doc_id"])
+        # 의미 검색 1위는 키워드에 안 걸려도 결과에 넣는다. 문서가 많으면 일반 단어("vulnerability" 등)로
+        # 키워드 순위가 흐려져, 뜻이 가장 가까운 문서가 RRF에서 밀리기 때문이다(실시간 점검 30번)
+        if vector_ranked:
+            best = self.docs[vector_ranked[0]]["doc_id"]
+            if all(d["doc_id"] != best for d in picked):
+                if len(picked) >= k:
+                    picked.pop()
+                self._add(picked, best)
 
         self.last_search = {
             "expanded_keywords": keywords,

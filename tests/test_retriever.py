@@ -73,6 +73,19 @@ def test_두_검색에서_모두_위에_있는_문서가_먼저_온다(vulns_t1)
     assert set(top[:2]) == {"CVE-2024-7347", "CVE-2022-41741"}
 
 
+def test_의미_검색_1위는_키워드_순위에서_밀려도_결과에_들어간다():
+    """문서가 많아 일반 단어로 키워드 순위가 흐려져도 뜻이 가장 가까운 문서는 빠지지 않는다(실시간 점검 30번)."""
+    def vuln(i, text):
+        return {"id": f"CVE-2026-{i:04d}", "aliases": [], "description": text, "scores": {"nvd": 5.0},
+                "kev": False, "affects": [{"product": "nginx", "ranges": [{"introduced": "1.0.0"}]}]}
+    noise = [vuln(i, "remote code execution vulnerability in the server login page") for i in range(1, 6)]
+    target = vuln(99, "sshd signal handler race condition when the client does not authenticate in time")
+    r = VulnRetriever(noise + [target], embedder=FakeEmbedder())
+    found = ids(r.search("ssh server login vulnerability"))
+    assert len(found) == 3 and "CVE-2026-0099" in found
+    assert "CVE-2026-0099" not in r.last_search["keyword_hits"][:3]  # 키워드로는 위에 오지 못했다
+
+
 def test_무관한_질문은_의미_검색에서도_걸러진다(vulns_t1):
     r = VulnRetriever(vulns_t1, embedder=FakeEmbedder())
     assert r.search("오늘 서울 날씨 어때?") == []

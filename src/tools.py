@@ -6,6 +6,7 @@ LLM에는 제품 이름 문장만 보낸다(후보 제시). 팀명과 프로젝�
 
 import functools
 import html
+from collections import Counter
 import json
 import re
 import threading
@@ -22,6 +23,9 @@ from src.retriever import ID_PATTERN, VulnRetriever
 # 근거 데이터가 없어서 '확인할 수 없음'으로 답해야 하는 결과 상태
 NO_DATA_STATUSES = {"unknown_vuln", "unknown_product", "unmonitored_item", "not_listed_product", "no_docs"}
 SUMMARY_LENGTH = 300
+CHECK_LIMIT = 20   # 해당 여부 조회 결과에 담는 최대 건수 (실시간 데이터는 한 프로젝트에 100건이 넘는다)
+STATUS_LIMIT = 15  # 현황 조회에서 프로젝트마다 담는 최대 건수
+ALERT_LIMIT = 10   # 현황 조회에 담는 최근 알림 이력 건수
 
 
 @dataclass
@@ -315,6 +319,8 @@ def check_vulnerabilities(session: Session, project: str | None = None, product:
         for m in matching.match_item(pool, t["product"], t["version"]):
             matches.append(_compact(m, t["name"], t["project"]))
     matches.sort(key=_sort_key)
+    total = len(matches)
+    matches = matches[:CHECK_LIMIT]  # 많으면 KEV 등재·높은 점수 순으로 앞의 것만 담는다
     for m in matches:
         session.add_context(m["id"], f'{m["product"]} {m["version"]}은 영향 범위에 들어 해당함')
 
@@ -337,10 +343,14 @@ def check_vulnerabilities(session: Session, project: str | None = None, product:
                        "보유한 취약점 데이터 범위에서는 해당하는 건이 없습니다. 데이터에 없는 취약점까지 없다는 뜻은 아닙니다.",
                        checked=[f'{t["name"]} {t["version"]}' for t in targets], unmonitored=unmonitored)
     # summary만 보고 설명을 끝내지 않도록 결과 안에서 다음 할 일을 알려 준다(평가 28번)
-    return _result(session, "ok",
-                   f"해당하는 취약점 {len(matches)}건. summary는 설명문 앞부분만 자른 것이다. 사용자가 취약점 설명을 "
-                   "요청했으면 답하기 전에 search_vuln_docs를 불러 전체 설명문을 확인한다.",
-                   matches=matches, unmonitored=unmonitored)
+    message = (f"해당하는 취약점 {total}건. summary는 설명문 앞부분만 자른 것이다. 사용자가 취약점 설명을 "
+               "요청했으면 답하기 전에 search_vuln_docs를 불러 전체 설명문을 확인한다.")
+    extra = {}
+    if total > len(matches):
+        message = (f"해당하는 취약점 {total}건. 많아서 KEV 등재·높은 점수 순으로 {len(matches)}건만 담았다. "
+                   f"답할 때 전체 {total}건이라고 밝히고 담긴 것만 적는다. " + message.split(". ", 1)[1])
+        extra = {"total": total, "omitted": total - len(matches)}
+    return _result(session, "ok", message, **extra, matches=matches, unmonitored=unmonitored)
 
 
 def get_project_status(session: Session, project: str | None = None) -> dict:
@@ -366,16 +376,28 @@ def get_project_status(session: Session, project: str | None = None) -> dict:
             for m in matching.match_item(session.vulns, item["product"], item["version"]):
                 vulns.append(_compact(m, names[item["product"]]))
         vulns.sort(key=_sort_key)
+        total = len(vulns)
+        vulns = vulns[:STATUS_LIMIT]  # 많으면 KEV 등재·높은 점수 순으로 앞의 것만 담는다
         for v in vulns:
             session.add_context(v["id"], f'{v["product"]} {v["version"]}은 영향 범위에 들어 해당함')
             v.pop("summary")  # 현황에서는 요약문을 뺀다
-        # 실시간 모드의 기준선 기록(baseline)은 메일을 보내지 않은 것이라 따로 밝힌다
+        history = storage.list_alerts(session.conn, proj["id"])
+        # 실시간 모드의 기준선 기록(baseline)은 메일을 보내지 않은 것이라 따로 밝히고, 최근 것만 담는다
         alerts = [{"vuln_id": a["vuln_id"], "reason": "baseline(메일 없이 기록)" if a["reason"] == "baseline" else a["reason"],
                    "sent_at": a["sent_at"]}
-                  for a in storage.list_alerts(session.conn, proj["id"])]
-        report.append({"project": proj["name"], "items": items, "vulnerabilities": vulns,
-                       "unmonitored": unmonitored, "alerts": alerts})
-    return _result(session, "ok", f"프로젝트 {len(report)}개의 현황.", projects=report)
+                  for a in history[-ALERT_LIMIT:]]
+        entry = {"project": proj["name"], "items": items, "vulnerabilities": vulns,
+                 "unmonitored": unmonitored, "alerts": alerts}
+        if total > len(vulns):
+            entry |= {"vulnerabilities_total": total, "omitted": total - len(vulns)}
+        if len(history) > len(alerts):
+            entry["alerts_total"] = dict(Counter(a["reason"] for a in history))
+        report.append(entry)
+    message = f"프로젝트 {len(report)}개의 현황."
+    if any("omitted" in e for e in report):
+        message += (" 취약점이 많은 프로젝트는 KEV 등재·높은 점수 순으로 일부만 담았다(vulnerabilities_total이 전체 건수). "
+                    "답할 때 프로젝트마다 전체 건수를 밝히고 담긴 것만 적는다.")
+    return _result(session, "ok", message, projects=report)
 
 
 # ---------------- 문서 검색 ----------------
@@ -460,11 +482,17 @@ def _project_arg(session: Session, project: str | None) -> str | None:
     """
     if not project:
         return None
-    text = html.unescape(project).strip().strip("\"'“”‘’ ")
+    text = _strip_marks(project, brackets=False)  # 대괄호는 가린 표시([프로젝트1])의 일부라 되돌린 뒤에 벗긴다
     # 글자나 숫자가 하나도 없는 값(".", "-")도 생략으로 본다. Nova Pro가 빈 인자 자리에 넣기도 한다
     if not re.search(r"\w", text) or "".join(text.lower().split()) in ALL_PROJECTS:
         return None
-    return session.unmask(text)
+    # 가린 이름을 되돌린 뒤에도 남은 대괄호 조각을 벗긴다(실시간 점검 14번: 모델이 ']결제 API'를 넣었다)
+    return _strip_marks(session.unmask(text))
+
+
+def _strip_marks(text: str, brackets: bool = True) -> str:
+    """앞뒤의 따옴표, 공백, HTML 표기(&quot;)와 (brackets면) 대괄호를 벗긴다."""
+    return html.unescape(text).strip().strip("\"'“”‘’ " + ("[]" if brackets else ""))
 
 
 def _locked(func, lock):
@@ -486,7 +514,7 @@ def build_tools(session: Session) -> list:
         project: 등록할 프로젝트 이름. product_text: 제품 이름과 버전(예: 'OpenSSL 3.0.6').
         버전이 없으면 status=need_version이 오므로 사용자에게 버전을 되묻는다.
         """
-        args = {"project": session.unmask(project), "product_text": product_text}
+        args = {"project": _strip_marks(session.unmask(_strip_marks(project, brackets=False))), "product_text": product_text}
         return _record(session, "propose_candidates", args, propose_candidates(session, **args))
 
     @tool("confirm_registration")

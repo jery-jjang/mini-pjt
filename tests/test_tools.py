@@ -308,6 +308,38 @@ def test_project_인자의_따옴표와_전체는_다듬는다(session_for):
     assert json.loads(member["get_project_status"].invoke({"project": '"배치 서버"'}))["status"] == "denied"
 
 
+def test_project_인자에_남은_대괄호_조각을_벗긴다(session_for):
+    """모델이 ']결제 API'처럼 대괄호 조각을 넣어도 프로젝트를 찾는다(실시간 점검 14번)."""
+    member = {t.name: t for t in tools.build_tools(session_for("team_a_member"))}
+    for value in ("]결제 API", "[결제 API]", '"[결제 API"'):
+        out = json.loads(member["check_vulnerabilities"].invoke({"project": value}))
+        assert out["status"] == "ok", value
+    out = json.loads(member["propose_candidates"].invoke({"project": "]사내 포털", "product_text": "OpenSSL 3.0.6"}))
+    assert out["status"] == "candidates"
+
+
+def _many_vulns(count):
+    """Nginx 1.24.0에 해당하는 시험용 취약점 여러 건. 앞의 두 건은 KEV, 점수는 번호가 클수록 낮다."""
+    return [{"id": f"CVE-2026-{1000 + i}", "aliases": [], "description": f"Test {i}.",
+             "scores": {"nvd": round(9.9 - i * 0.1, 1), "other": None, "other_source": None}, "kev": i < 2,
+             "affects": [{"product": "nginx", "ranges": [{"introduced": "1.0.0", "fixed": "2.0.0"}]}]} for i in range(count)]
+
+
+def test_해당_취약점이_많으면_KEV와_높은_점수_순으로_줄여서_담는다(conn):
+    s = tools.Session(conn=conn, account=storage.get_account(conn, "team_a_member"), vulns=_many_vulns(30))
+    result = tools.check_vulnerabilities(s, project="사내 포털")
+    assert result["total"] == 30 and result["omitted"] == 10 and len(result["matches"]) == tools.CHECK_LIMIT
+    assert [m["id"] for m in result["matches"][:2]] == ["CVE-2026-1000", "CVE-2026-1001"]  # KEV가 먼저
+    assert "전체 30건" in result["message"] and len(s.contexts) == tools.CHECK_LIMIT
+    status = tools.get_project_status(s, project="사내 포털")["projects"][0]
+    assert status["vulnerabilities_total"] == 30 and len(status["vulnerabilities"]) == tools.STATUS_LIMIT
+
+
+def test_건수가_한도_안이면_줄이지_않는다(session_for):
+    result = tools.check_vulnerabilities(session_for(), project="결제 API")
+    assert "omitted" not in result and "total" not in result and len(result["matches"]) == 10
+
+
 def test_도구_호출은_trace에_남고_프로젝트명은_가려서_돌려준다(session_for):
     s = session_for()
     s.mask = lambda text: text.replace("결제 API", "[프로젝트1]")
