@@ -11,7 +11,7 @@
 
 ## 기술 스택
 
-- Python 3.14.8, 로컬 venv. Docker는 쓰지 않는다. (의존성이 3.14에 설치되지 않으면 사용자에게 알리고 멈춘다)
+- Python 3.14.8, 로컬 venv. 개발·테스트·평가는 venv로 한다. `Dockerfile`은 클린 환경 재현 확인용으로만 둔다. (의존성이 3.14에 설치되지 않으면 사용자에게 알리고 멈춘다)
 - LangChain 1.4.7, LangGraph 1.2.19, langchain-aws 1.9.1, FastAPI 0.162.0 (실습 환경과 같은 버전)
 - 모델은 Amazon Bedrock, `langchain-aws`의 `ChatBedrockConverse`. 모델 ID와 리전은 `.env`의 `VULNWATCH_MODEL_ID`, `VULNWATCH_REGION`으로 정한다. 모델은 Amazon Nova Pro(`us.amazon.nova-pro-v1:0`, `us-east-1`)로 쓰고, `.env`에 없을 때 코드 기본값도 같다. 1차·2차 평가, LLM 채점, RAGAS 결과는 모두 Nova Pro로 낸 것이다
 - Agent 생성은 `langchain.agents`의 `create_agent`를 쓴다
@@ -44,7 +44,8 @@ SERVICE.md            무엇을 왜 만드는가
 CLAUDE.md             이 문서
 README.md             산출물 규약의 README 틀을 따른다 (활용 패턴, 아키텍처, 실행 방법, 평가 결과, 통과율, 회고, 핵심 코드 위치)
 requirements.txt      의존성
-.gitignore            .venv/, var/, outbox/, .env, .claude, .ouroboros 제외
+.gitignore            .venv/, var/, outbox/, .env, .claude, .ouroboros, .vscode, reference 제외
+Dockerfile            클린 환경 재현용 (선택. 사용자 요청으로 2026-11-13에 더함. .env와 var/는 이미지에 넣지 않는다)
 app.py                POST /query 진입점 (FastAPI). 등록 목록·설정 API와 화면 파일(/ui)도 내준다
 src/agent.py          메인 에이전트 그래프
 src/tools.py          도메인 도구 (등록, 조회, 문서 검색, 감시)
@@ -90,7 +91,7 @@ web/                  로컬 화면 (빌드 없는 HTML·CSS·JS. 서버가 /ui�
 - 프로젝트와 프로젝트별 알림 수신 주소는 `data/`의 초기 시드에 넣어 둔다. 대화로 프로젝트를 새로 만드는 기능은 만들지 않는다.
 - UI용 설정 API: `GET /settings`(누구나)는 `scan_interval_hours`, `scheduler_enabled`, `last_run_at`, `next_run_at`, `snapshot`을 돌려준다. `PUT /settings/snapshot`(보안 담당자만, 본문 `{"snapshot": "T1" 또는 "T2"}`)은 취약점 데이터 시점을 바꾸고 같은 형식으로 돌려준다(권한 오류는 주기 변경과 같고, 다른 값은 422). `PUT /settings/scan-interval`(보안 담당자만, 본문 `{"hours": 숫자}`)은 검색 주기를 바꾸고 같은 형식으로 돌려준다. 팀원·토큰 없음은 403, 모르는 토큰은 401, 0 이하나 숫자가 아닌 값은 422.
 - UI용 등록 목록 API: `GET /projects`는 토큰 기준(없으면 기본 계정)으로 볼 수 있는 프로젝트와 삭제되지 않은 등록 항목(`id`, `raw_text`, `product`, `version`, `monitored`)을 돌려준다.
-- UI용 삭제 API: `DELETE /projects/{project_id}/items/{item_id}`는 그 항목을 삭제 표시하고 지운 항목을 돌려준다. 모르는 토큰 401, 다른 팀 프로젝트 403, 없거나 이미 지운 항목 404. 알림 수신 주소는 주지 않는다. 모르는 토큰은 401.
+- UI용 삭제 API: `DELETE /projects/{project_id}/items/{item_id}`는 그 항목을 삭제 표시하고 지운 항목을 돌려준다. 모르는 토큰 401, 다른 팀 프로젝트 403, 없거나 이미 지운 항목 404. 알림 수신 주소는 주지 않는다.
 - 화면의 실행 기록(`trace`) 패널은 보안 담당자 계정에만 보인다. 화면에서 숨기는 것이고 `/query` 응답의 `trace`는 규약대로 항상 채운다.
 - 화면(`web/`)은 로컬에서만 쓴다. 계정은 상단에서 데모 토큰 3개 중 고르는 방식이고 로그인 화면은 만들지 않는다.
 
