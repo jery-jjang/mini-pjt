@@ -2,6 +2,7 @@
 
 무엇을 왜 만드는지는 `SERVICE.md`에 있습니다. 이 문서는 어떻게 만드는지만 다룹니다.
 산출물 규약의 원문은 `reference/`의 "mini PJT" 자료(4. 산출물 규약)입니다. 폴더 구조, API 형식, 인-아웃 세트 스키마는 그 규약을 따릅니다.
+작업이 끝날 때마다 `history.md`에 기록을 남기고, 기록 규칙은 `AGENT.md`를 따릅니다.
 상세 인수 기준은 `.ouroboros/seed_bfee3756e9e9.yaml`에 있습니다(커밋되지 않는 로컬 파일). 그 파일과 경로, 파일 이름, 응답 형식이 다르면 이 문서가 우선합니다. 예: 명세의 `miniprj/eval_set.json`은 `evaluation/test_queries.csv`, `miniprj/run_eval.py`는 `evaluation/run_eval.py`, `miniprj/tests/`는 `tests/`입니다.
 
 ## PoC 범위
@@ -42,6 +43,8 @@ python -m venv .venv                      가상환경 만들기 (처음 한 번
 ```
 SERVICE.md            무엇을 왜 만드는가
 CLAUDE.md             이 문서
+AGENT.md              작업 기록 규칙 (사용자 요청으로 2026-11-13에 더함)
+history.md            채팅으로 진행한 작업 기록 (AGENT.md 규칙대로 이어 쓴다)
 README.md             산출물 규약의 README 틀을 따른다 (활용 패턴, 아키텍처, 실행 방법, 평가 결과, 통과율, 회고, 핵심 코드 위치)
 requirements.txt      의존성
 .gitignore            .venv/, var/, outbox/, .env, .claude, .ouroboros, .vscode, reference 제외
