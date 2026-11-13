@@ -242,7 +242,7 @@ def answer_question(conn, account: dict, question: str, llm=None, embedder=None,
         embedder = embedder or make_embedder()
     settings = get_settings()
     masker = Masker(conn)
-    session = Session(conn=conn, account=account, vulns=sources.load_snapshot(), llm=llm,
+    session = Session(conn=conn, account=account, vulns=sources.load_snapshot(sources.current_snapshot(conn)), llm=llm,
                       mask=masker.mask, unmask=masker.unmask, expander=expander, embedder=embedder,
                       embed_cache_path=settings.db_path.parent / "doc_embeddings.json")
     masked = masker.mask(question)

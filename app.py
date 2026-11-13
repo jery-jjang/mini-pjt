@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from pydantic import BaseModel, Field
 
-from src import agent, auth, scheduler, storage
+from src import agent, auth, scheduler, sources, storage
 from src.config import ROOT, get_settings
 
 
@@ -80,6 +80,12 @@ class IntervalRequest(BaseModel):
     hours: float = Field(gt=0, allow_inf_nan=False, description="검색 주기(시간). 0보다 커야 한다. 예: 0.5는 30분")
 
 
+class SnapshotRequest(BaseModel):
+    """취약점 데이터 시점 변경 요청."""
+
+    snapshot: str = Field(description="T1 또는 T2")
+
+
 class SettingsResponse(BaseModel):
     """주기 검색 설정과 실행 시각."""
 
@@ -87,6 +93,7 @@ class SettingsResponse(BaseModel):
     scheduler_enabled: bool
     last_run_at: str | None
     next_run_at: str | None
+    snapshot: str  # 지금 쓰는 취약점 데이터 시점 (T1 또는 T2)
 
 
 class ItemOut(BaseModel):
@@ -125,10 +132,11 @@ def _account(authorization: str | None) -> dict:
 
 def _settings_status() -> dict:
     """지금의 주기 검색 설정. 주기 검색을 끈 서버는 저장된 주기만 돌려준다."""
+    snapshot = sources.current_snapshot(app.state.conn)
     if app.state.scheduler:
-        return app.state.scheduler.status()
+        return app.state.scheduler.status() | {"snapshot": snapshot}
     return {"scan_interval_hours": scheduler.load_interval(app.state.conn), "scheduler_enabled": False,
-            "last_run_at": None, "next_run_at": None}
+            "last_run_at": None, "next_run_at": None, "snapshot": snapshot}
 
 
 logger = logging.getLogger("vulnwatch")
@@ -312,6 +320,23 @@ def read_mail(mail_id: int, authorization: str | None = Header(default=None)):
 @app.get("/settings", response_model=SettingsResponse)
 def read_settings():
     """주기 검색 설정(주기, 사용 여부, 마지막·다음 검색 시각)을 본다. 누구나 볼 수 있다."""
+    return _settings_status()
+
+
+@app.put("/settings/snapshot", response_model=SettingsResponse)
+def change_snapshot(body: SnapshotRequest, authorization: str | None = Header(default=None)):
+    """취약점 데이터 시점(T1 또는 T2)을 바꾼다. 이후의 주기 검색, '지금 검색', 답변이 그 시점을 쓴다.
+
+    실시간 조회 대신 두 시점의 고정 사본을 쓰므로, 시연에서 '데이터가 갱신됐다'를 흉내 내는 설정이다.
+    모든 팀에 적용되므로 보안 담당자만 바꿀 수 있다. 검색을 바로 돌리지는 않는다. 다른 값은 422.
+    """
+    account = _account(authorization)
+    if account["role"] != "security_admin":
+        raise HTTPException(status_code=403, detail="취약점 데이터 시점은 보안 담당자만 바꿀 수 있습니다.")
+    try:
+        sources.save_snapshot(app.state.conn, body.snapshot)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return _settings_status()
 
 

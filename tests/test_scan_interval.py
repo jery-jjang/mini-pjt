@@ -184,4 +184,48 @@ def test_주기_검색을_끈_서버에서도_주기를_저장한다(tmp_path, m
 
     with TestClient(app_module.app) as c:
         res = c.put("/settings/scan-interval", json={"hours": 3}, headers=ADMIN).json()
-        assert res == {"scan_interval_hours": 3, "scheduler_enabled": False, "last_run_at": None, "next_run_at": None}
+        assert res == {"scan_interval_hours": 3, "scheduler_enabled": False, "last_run_at": None, "next_run_at": None,
+                       "snapshot": "T1"}
+
+
+# ---------------- 취약점 데이터 시점 ----------------
+
+def test_데이터_시점은_저장값이_없으면_설정값이다(api):
+    assert api.get("/settings").json()["snapshot"] == "T1"
+
+
+def test_보안_담당자는_데이터_시점을_바꾸고_검색에_반영된다(api):
+    import app as app_module
+    from src import sources
+
+    conn = app_module.app.state.conn
+    scheduler.run_once(conn)                                   # T1로 검색
+    before = conn.execute("SELECT COUNT(*) FROM alerts").fetchone()[0]
+    res = api.put("/settings/snapshot", json={"snapshot": "t2"}, headers=ADMIN)
+    assert res.status_code == 200 and res.json()["snapshot"] == "T2"
+    assert sources.current_snapshot(conn) == "T2"
+    assert conn.execute("SELECT COUNT(*) FROM alerts").fetchone()[0] == before  # 바꾸기만 해서는 검색하지 않는다
+    scheduler.run_once(conn)                                   # 시점을 주지 않으면 저장한 T2로 검색
+    assert conn.execute("SELECT COUNT(*) FROM alerts").fetchone()[0] > before   # 달라진 건의 알림이 나간다
+
+
+@pytest.mark.parametrize("headers, status", [(TEAM_A, 403), ({}, 403), ({"Authorization": "Bearer wrong"}, 401)])
+def test_보안_담당자가_아니면_데이터_시점을_바꿀_수_없다(api, headers, status):
+    assert api.put("/settings/snapshot", json={"snapshot": "T2"}, headers=headers).status_code == status
+    assert api.get("/settings").json()["snapshot"] == "T1"
+
+
+@pytest.mark.parametrize("value", ["T3", "", None, 2])
+def test_T1_T2가_아닌_시점은_422로_거부한다(api, value):
+    assert api.put("/settings/snapshot", json={"snapshot": value}, headers=ADMIN).status_code == 422
+    assert api.get("/settings").json()["snapshot"] == "T1"
+
+
+def test_바꾼_데이터_시점은_서버를_다시_띄워도_유지된다(tmp_path, monkeypatch):
+    monkeypatch.setenv("VULNWATCH_VAR_DIR", str(tmp_path))
+    import app as app_module
+
+    with TestClient(app_module.app) as c:
+        c.put("/settings/snapshot", json={"snapshot": "T2"}, headers=ADMIN)
+    with TestClient(app_module.app) as c:
+        assert c.get("/settings").json()["snapshot"] == "T2"

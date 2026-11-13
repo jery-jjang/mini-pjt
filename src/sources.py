@@ -3,7 +3,11 @@
 import json
 from pathlib import Path
 
+from src import storage
 from src.config import get_settings
+
+SNAPSHOTS = ("T1", "T2")  # 고정 사본의 두 시점
+SNAPSHOT_KEY = "snapshot"  # meta 표에 저장하는 이름
 
 
 class SourceError(Exception):
@@ -21,6 +25,32 @@ def load_snapshot(snapshot: str | None = None, data_dir=None) -> list[dict]:
         return json.loads(path.read_text(encoding="utf-8"))["vulnerabilities"]
     except (OSError, ValueError, KeyError) as exc:
         raise SourceError(f"스냅샷을 읽지 못했습니다: {path.name}") from exc
+
+
+def validate_snapshot(name) -> str:
+    """시점 이름을 검사해 대문자로 돌려준다. T1, T2가 아니면 ValueError."""
+    value = str(name).strip().upper() if name is not None else ""
+    if value not in SNAPSHOTS:
+        raise ValueError(f"취약점 데이터 시점은 T1 또는 T2여야 합니다: {name!r}")
+    return value
+
+
+def current_snapshot(conn) -> str:
+    """지금 쓰는 시점. 화면에서 바꿔 저장한 값이 있으면 그 값, 없거나 잘못됐으면 설정값(.env, 기본 T1)."""
+    stored = storage.get_meta(conn, SNAPSHOT_KEY)
+    if stored is not None:
+        try:
+            return validate_snapshot(stored)
+        except ValueError:
+            pass
+    return get_settings().snapshot
+
+
+def save_snapshot(conn, name) -> str:
+    """시점을 검사해 저장한다. 서버를 다시 띄워도 이 값을 쓴다. T1, T2가 아니면 ValueError."""
+    value = validate_snapshot(name)
+    storage.set_meta(conn, SNAPSHOT_KEY, value)
+    return value
 
 
 # ---------------- 참고 링크 ----------------

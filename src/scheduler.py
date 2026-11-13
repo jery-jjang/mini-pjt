@@ -22,7 +22,8 @@ INTERVAL_KEY = "scan_interval_hours"
 def run_once(conn, llm=None, snapshot: str | None = None, loader=None) -> dict:
     """검색을 한 번 실행한다. loader는 취약점 목록을 돌려주는 함수(테스트에서 바꿔 끼운다)."""
     settings = get_settings()
-    load = loader or (lambda: sources.load_snapshot(snapshot))
+    # snapshot을 주지 않으면 화면에서 바꿔 저장한 시점(없으면 설정값)을 쓴다
+    load = loader or (lambda: sources.load_snapshot(snapshot or sources.current_snapshot(conn)))
     try:
         vulns = load()
     except sources.SourceError as exc:
