@@ -91,6 +91,7 @@
         <dt>지금 주기</dt><dd id="set-interval">-</dd>
         <dt>마지막 검색</dt><dd id="set-last">-</dd>
         <dt>다음 검색</dt><dd id="set-next">-</dd>
+        <dt>데이터 시점</dt><dd id="set-snapshot">-</dd>
       </dl>
 
       <div class="field">
@@ -112,8 +113,24 @@
       </div>
 
       <div class="dialog-actions">
-        <button type="button" class="secondary" id="settings-close">닫기</button>
         <button type="button" class="primary" id="interval-save">주기 바꾸기</button>
+      </div>
+
+      <div class="field snapshot-field">
+        <label for="snapshot-select">취약점 데이터 시점 (시연용)</label>
+        <div class="snapshot-row">
+          <select id="snapshot-select" aria-describedby="snapshot-help snapshot-error">
+            <option value="T1">T1 · 1차 시점</option>
+            <option value="T2">T2 · 2차 시점</option>
+          </select>
+          <button type="button" class="primary" id="snapshot-save">시점 바꾸기</button>
+        </div>
+        <p class="muted small" id="snapshot-help">실시간 조회 대신 두 시점의 고정 사본을 씁니다. T2는 T1에서 점수 상승, KEV 신규 등재 등이 반영된 시점입니다. 바꾼 뒤의 주기 검색, "지금 검색 실행해줘", 답변이 이 시점을 씁니다. 검색을 바로 돌리지는 않습니다.</p>
+        <p class="error-text" id="snapshot-error" role="alert"></p>
+      </div>
+
+      <div class="dialog-actions">
+        <button type="button" class="secondary" id="settings-close">닫기</button>
       </div>
     </form>
   </dialog>

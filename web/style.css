@@ -431,3 +431,8 @@ dialog::backdrop { background: rgba(2, 6, 23, 0.6); }
 .mail-item:not(.unread) .mail-subject { font-weight: 500; color: var(--muted); }
 .readers ul { list-style: none; margin: var(--space-1) 0 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-1); }
 .readers li { display: flex; justify-content: space-between; align-items: center; gap: var(--space-2); font-size: 0.875rem; }
+
+/* 취약점 데이터 시점 선택 */
+.snapshot-field { border-top: 2px solid var(--border); padding-top: var(--space-3); }
+.snapshot-row { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+.snapshot-row select { flex: 1; min-width: 0; min-height: 44px; padding: 0 var(--space-3); }

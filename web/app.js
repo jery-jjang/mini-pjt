@@ -679,6 +679,8 @@ function showSettings(s) {
   $("set-interval").textContent = formatHours(s.scan_interval_hours);
   $("set-last").textContent = formatTime(s.last_run_at);
   $("set-next").textContent = formatTime(s.next_run_at);
+  $("set-snapshot").textContent = s.snapshot;
+  $("snapshot-select").value = s.snapshot;
   const { hours, minutes } = splitHours(s.scan_interval_hours);
   $("interval-hours").value = hours;
   $("interval-minutes").value = minutes;
@@ -691,7 +693,10 @@ function openSettings() {
     $(id).removeAttribute("aria-invalid");
   }
   $("interval-save").disabled = !admin;
-  $("interval-error").textContent = admin ? "" : "지금 계정은 주기를 바꿀 수 없습니다. 보안 담당자로 바꿔 주세요.";
+  $("snapshot-select").disabled = !admin;
+  $("snapshot-save").disabled = !admin;
+  $("snapshot-error").textContent = "";
+  $("interval-error").textContent = admin ? "" : "지금 계정은 주기와 데이터 시점을 바꿀 수 없습니다. 보안 담당자로 바꿔 주세요.";
   loadSettings();
   $("settings-dialog").showModal();
 }
@@ -732,6 +737,22 @@ async function saveInterval() {
   }
 }
 
+/** 취약점 데이터 시점(T1/T2)을 바꾼다. 보안 담당자만 할 수 있고 권한은 서버가 확인한다. */
+async function saveSnapshot() {
+  const error = $("snapshot-error");
+  $("snapshot-save").disabled = true;
+  try {
+    const s = await api("/settings/snapshot", { method: "PUT", body: { snapshot: $("snapshot-select").value } });
+    error.textContent = "";
+    showSettings(s);
+    $("set-snapshot").textContent = `${s.snapshot} (바꿨습니다. 다음 검색부터 반영)`;
+  } catch (err) {
+    error.textContent = err.detail;
+  } finally {
+    $("snapshot-save").disabled = currentAccount().id !== "security_admin";
+  }
+}
+
 // ---------------- 시작 ----------------
 
 function init() {
@@ -762,6 +783,7 @@ function init() {
   $("remove-cancel").addEventListener("click", () => { removing = null; $("remove-dialog").close(); });
   $("remove-confirm").addEventListener("click", confirmRemove);
   $("interval-save").addEventListener("click", saveInterval);
+  $("snapshot-save").addEventListener("click", saveSnapshot);
 
   loadProjects();
   loadSettings();
