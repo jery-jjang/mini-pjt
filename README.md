@@ -106,7 +106,7 @@ VULNWATCH_REGION=us-east-1
 
 ```
 .venv\Scripts\python -m uvicorn app:app                    서버 실행. 화면은 http://127.0.0.1:8000/ui/
-.venv\Scripts\python -m pytest tests -q                    자동 테스트 170건 (실제 LLM 호출 없음)
+.venv\Scripts\python -m pytest tests -q                    자동 테스트 180건 (실제 LLM 호출 없음)
 .venv\Scripts\python evaluation/run_eval.py --round 2      인-아웃 세트 30건 평가 (실제 Bedrock 호출. roundN_report.md를 덮어쓴다)
 .venv\Scripts\python evaluation/run_ragas.py --round 2     RAGAS 지표 (run_eval 뒤에 실행. 설치 방법은 requirements.txt 아래쪽)
 .venv\Scripts\python -m src.scheduler --snapshot T2        검색 1회 실행 (알림 메일은 DB에 저장)
@@ -122,7 +122,7 @@ VULNWATCH_REGION=us-east-1
 |---|---|---|
 | `VULNWATCH_SCAN_INTERVAL_HOURS` | `6` | 주기 검색 간격의 처음 값(시간). 소수도 됩니다. 예: `1`(1시간), `0.5`(30분), `0.05`(3분). 0 이하나 숫자가 아닌 값이면 서버가 뜨지 않고 이유를 알려 줍니다 |
 | `VULNWATCH_SCHEDULER_ENABLED` | `true` | `false`면 주기 검색을 하지 않습니다. 검색은 대화("지금 검색 실행해줘")나 위의 1회 실행 명령으로만 합니다 |
-| `VULNWATCH_SNAPSHOT` | `T1` | 쓸 취약점 스냅샷 시점(`T1` 또는 `T2`) |
+| `VULNWATCH_SNAPSHOT` | `T1` | 쓸 취약점 스냅샷 시점(`T1` 또는 `T2`)의 처음 값. 화면이나 API로 바꾸면 그 값이 우선합니다 |
 | `VULNWATCH_ALERT_CVSS_THRESHOLD` | `9.0` | 알림 기준 점수 |
 | `VULNWATCH_FAILURE_NOTICE_THRESHOLD` | `2` | 조회가 몇 회 연속 실패하면 보안 담당자에게 알릴지 |
 
@@ -136,6 +136,7 @@ UI에서 쓸 수 있도록 API로 엽니다.
 |---|---|---|
 | `GET /settings` | 누구나 | 현재 주기, 주기 검색 사용 여부, 마지막 검색 시각, 다음 검색 시각 |
 | `PUT /settings/scan-interval` 본문 `{"hours": 1}` | 보안 담당자 토큰만 | 주기를 바꾸고 바뀐 상태를 돌려줍니다 |
+| `PUT /settings/snapshot` 본문 `{"snapshot": "T2"}` | 보안 담당자 토큰만 | 취약점 데이터 시점(T1 또는 T2)을 바꿉니다. 다른 값은 422 |
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8000/settings/scan-interval -Method Put -ContentType "application/json" `
@@ -146,6 +147,7 @@ Invoke-RestMethod http://127.0.0.1:8000/settings/scan-interval -Method Put -Cont
 - **유지됩니다.** 바꾼 주기는 DB에 저장되어 서버를 다시 띄워도 그 값을 씁니다. `.env` 값은 저장된 주기가 없을 때만 씁니다.
 - **0 이하나 숫자가 아닌 값은 422**로 거부하고 주기를 바꾸지 않습니다. 팀원 토큰이나 토큰 없이 요청하면 403, 모르는 토큰은 401입니다.
 - 주기는 모든 팀의 프로젝트에 한꺼번에 적용되어 보안 담당자만 바꿀 수 있게 했습니다.
+- **취약점 데이터 시점**도 같은 창에서 바꿉니다. 실시간 조회 대신 두 시점의 고정 사본(T1, T2)을 쓰므로, 시점을 T2로 바꾸는 것이 "취약점 데이터가 갱신됐다"를 흉내 냅니다. 바꾼 뒤의 주기 검색, "지금 검색 실행해줘", 답변이 모두 그 시점을 쓰고, 바꾼 값은 DB에 저장됩니다. 시점을 바꿔도 검색을 바로 돌리지는 않습니다.
 
 ### 화면 (로컬 UI)
 
@@ -156,7 +158,7 @@ Invoke-RestMethod http://127.0.0.1:8000/settings/scan-interval -Method Put -Cont
 - **질문**: 질문을 보내면 답변과 라벨(답변, 확인할 수 없음, 거절)을 보여 줍니다. 등록 후보가 나오면 번호 버튼으로 확정합니다. 오류(401, 422, 429, 503)는 이유를 대화 안에 보여 줍니다.
 - **응답 상세**: 답변을 누르면 그 답변이 강조되고, 근거 문서(`contexts`)를 펼쳐 봅니다. 실행 기록(`trace`)은 보안 담당자 화면에만 보입니다(화면에서만 숨기며, `/query` 응답의 `trace`는 규약대로 그대로 채웁니다). 라벨과 취약점·도구 수는 답변 말풍선에 보입니다. 근거 문서는 SW 또는 CVE로 골라 봅니다. SW는 SW 하나에 걸린 CVE를 점수 높은 순으로 보고, CVE는 CVE 하나를 골라 점수, KEV, 영향 SW, 판정을 봅니다(SW 이름은 해당 여부 판정이 있으면 등록된 SW 이름, 없으면 데이터의 제품 이름). 근거 문서마다 원문을 확인할 수 있는 참고 링크(NVD, OSV, GitHub Advisory, CISA KEV)를 새 탭으로 엽니다.
 - **알림함**: 상단의 알림함을 누르면 가짜 발송한 알림 메일(DB에 저장)의 목록과 본문을 봅니다. 버튼에는 안 읽은 메일 수가, 목록의 안 읽은 메일에는 N이 붙고, 메일을 열면 읽음이 됩니다(모두 읽음 버튼도 있습니다). 읽음 현황은 계정마다 따로이고, 보안 담당자는 메일마다 볼 수 있는 계정별로 읽었는지와 읽은 시각을 봅니다. 팀원은 자기 팀 프로젝트의 알림만, 보안 담당자는 조회 실패 통지를 포함해 전체와 받는 주소까지 봅니다.
-- **검색 주기**: 상단의 검색 주기를 누르면 주기와 마지막·다음 검색 시각을 보고, 보안 담당자는 주기를 바꿀 수 있습니다.
+- **검색 주기**: 상단의 검색 주기를 누르면 주기와 마지막·다음 검색 시각, 취약점 데이터 시점을 보고, 보안 담당자는 주기와 데이터 시점(T1/T2)을 바꿀 수 있습니다.
 
 화면이 쓰는 등록 목록 API:
 
@@ -187,7 +189,7 @@ Windows에서 `curl -d "{...한글...}"`처럼 한글 질문을 명령줄에 직
 | 팀 B 팀원 | `demo-token-team-b` | 배치 서버 |
 | 보안 담당자 | `demo-token-security` | 전체 |
 
-시연 순서 예: 서버 실행 → 조회 질문 → 등록("사내 포털에 OpenSSL 3.0.6 등록해줘" → "1번으로 확정해줘") → `python -m src.scheduler --snapshot T1` → `--snapshot T2`로 달라진 건만 알림이 나가는지 확인.
+시연 순서 예: 서버 실행 → 조회 질문 → 등록("사내 포털에 OpenSSL 3.0.6 등록해줘" → "1번으로 확정해줘") → 보안 담당자로 "지금 검색 실행해줘"(T1 알림) → 검색 주기 창에서 데이터 시점을 T2로 변경 → 다시 "지금 검색 실행해줘"로 달라진 건만 알림이 나가는지 알림함에서 확인. 명령으로는 `python -m src.scheduler --snapshot T1`, `--snapshot T2`.
 
 ## RAGAS 평가 결과
 
