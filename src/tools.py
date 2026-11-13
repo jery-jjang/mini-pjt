@@ -4,8 +4,11 @@
 LLM에는 제품 이름 문장만 보낸다(후보 제시). 팀명과 프로젝트명은 보내지 않는다.
 """
 
+import functools
+import html
 import json
 import re
+import threading
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -164,14 +167,16 @@ def suggest_candidates(name: str, products: list[dict], llm) -> list[str]:
 
 def propose_candidates(session: Session, project: str, product_text: str) -> dict:
     """등록할 제품 문장에서 표준 식별자 후보 1~3개를 제시하고 대기 후보로 저장한다."""
-    proj, error = _project_for(session, project)
-    if error:
-        return error
+    # 제품 이름과 버전부터 확인한다. 버전이 빠진 요청에 모델이 프로젝트를 지어내 넣어도
+    # 다른 팀 차단으로 가지 않고 버전을 되묻게 된다(프로젝트 내용은 아무것도 알려 주지 않는다)
     name, version = _split_product_text(product_text)
     if not name:
         return _result(session, "need_product", "등록할 제품 이름을 알려 주세요.")
     if version is None:
         return _result(session, "need_version", f"'{name}'의 버전을 알려 주세요. 버전이 있어야 등록할 수 있습니다.")
+    proj, error = _project_for(session, project)
+    if error:
+        return error
 
     products = storage.list_products(session.conn)
     by_key = {p["key"]: p for p in products}
@@ -232,9 +237,10 @@ def confirm_registration(session: Session, choice: int) -> dict:
     storage.add_item(session.conn, project["id"], pending["raw_text"], picked["product"], pending["version"], "confirmed")
     storage.save_mapping(session.conn, pending["raw_text"], picked["product"])
     storage.clear_pending(session.conn, session.account["id"])
-    return _result(session, "registered", "등록이 완료됐습니다. 다음 검색부터 감시 대상에 들어갑니다.",
-                   project=project["name"], item=f'{picked["name"]} {pending["version"]}',
-                   identifier=picked["identifier"])
+    label = f'{picked["name"]} {pending["version"]}'
+    return _result(session, "registered",
+                   f'{project["name"]}에 {label} 등록이 완료됐습니다. 다음 검색부터 감시 대상에 들어갑니다.',
+                   project=project["name"], item=label, identifier=picked["identifier"])
 
 
 # ---------------- 조회 ----------------
@@ -253,10 +259,15 @@ def _confirmed_targets(session: Session, projects: list[dict]):
     return targets, unmonitored
 
 
+VULN_ID_RE = re.compile(r"(CVE|GHSA)-", re.IGNORECASE)
+
+
 def check_vulnerabilities(session: Session, project: str | None = None, product: str | None = None,
                           version: str | None = None, vuln_id: str | None = None) -> dict:
     """프로젝트 또는 제품·버전에 해당하는 취약점을 판정한다. vuln_id를 주면 그 취약점만 본다."""
     target_vuln = None
+    if vuln_id and not VULN_ID_RE.match(vuln_id.strip()):
+        vuln_id = None  # 모델이 ID 자리에 설명 글("mp4 모듈 관련")을 넣으면 무시하고 프로젝트·제품 기준으로 본다
     if vuln_id:
         target_vuln = matching.resolve_id(session.vulns, vuln_id)
         if target_vuln is None:
@@ -325,7 +336,10 @@ def check_vulnerabilities(session: Session, project: str | None = None, product:
         return _result(session, "none_found",
                        "보유한 취약점 데이터 범위에서는 해당하는 건이 없습니다. 데이터에 없는 취약점까지 없다는 뜻은 아닙니다.",
                        checked=[f'{t["name"]} {t["version"]}' for t in targets], unmonitored=unmonitored)
-    return _result(session, "ok", f"해당하는 취약점 {len(matches)}건.",
+    # summary만 보고 설명을 끝내지 않도록 결과 안에서 다음 할 일을 알려 준다(평가 28번)
+    return _result(session, "ok",
+                   f"해당하는 취약점 {len(matches)}건. summary는 설명문 앞부분만 자른 것이다. 사용자가 취약점 설명을 "
+                   "요청했으면 답하기 전에 search_vuln_docs를 불러 전체 설명문을 확인한다.",
                    matches=matches, unmonitored=unmonitored)
 
 
@@ -433,6 +447,33 @@ def _record(session: Session, name: str, args: dict, result: dict) -> str:
     return session.mask(text)
 
 
+ALL_PROJECTS = {"전체", "모두", "모든프로젝트", "전체프로젝트", "all"}
+
+
+def _project_arg(session: Session, project: str | None) -> str | None:
+    """모델이 준 project 인자를 다듬는다. 따옴표와 HTML 표기(&quot;)를 벗기고 가린 이름을 되돌린다.
+
+    '전체'처럼 모든 프로젝트를 뜻하는 말은 None(생략)으로 바꾼다. 생략하면 도구가 이 계정이 볼 수 있는
+    프로젝트만 보므로 권한은 그대로다(평가 7번: 모델이 project에 '"전체"'를 넣어 프로젝트 없음이 됐다).
+    """
+    if not project:
+        return None
+    text = html.unescape(project).strip().strip("\"'“”‘’ ")
+    # 글자나 숫자가 하나도 없는 값(".", "-")도 생략으로 본다. Nova Pro가 빈 인자 자리에 넣기도 한다
+    if not re.search(r"\w", text) or "".join(text.lower().split()) in ALL_PROJECTS:
+        return None
+    return session.unmask(text)
+
+
+def _locked(func, lock):
+    """도구 함수를 잠금 안에서 실행하도록 감싼다."""
+    @functools.wraps(func)
+    def run(*args, **kwargs):
+        with lock:
+            return func(*args, **kwargs)
+    return run
+
+
 def build_tools(session: Session) -> list:
     """이 요청의 계정과 데이터에 묶인 에이전트용 도구 목록을 만든다."""
 
@@ -462,9 +503,9 @@ def build_tools(session: Session) -> list:
 
         project: 프로젝트 이름(그 프로젝트의 등록 항목 전체를 본다).
         product, version: 제품과 버전을 직접 지정할 때.
-        vuln_id: 특정 CVE 또는 GHSA ID의 해당 여부만 볼 때.
+        vuln_id: 특정 CVE 또는 GHSA ID의 해당 여부만 볼 때. ID가 아닌 글(모듈 이름, 증상)은 넣지 않는다.
         """
-        args = {"project": session.unmask(project) if project else None, "product": product,
+        args = {"project": _project_arg(session, project), "product": product,
                 "version": version, "vuln_id": vuln_id}
         return _record(session, "check_vulnerabilities", args, check_vulnerabilities(session, **args))
 
@@ -472,9 +513,10 @@ def build_tools(session: Session) -> list:
     def status_tool(project: str | None = None) -> str:
         """프로젝트 현황(등록 목록, 해당 취약점과 점수·KEV 여부, 감시 불가 항목, 알림 이력)을 본다.
 
+        "해당하는 취약점 알려줘", "영향 있어?"처럼 해당 여부를 묻는 질문에는 쓰지 않는다(check_vulnerabilities를 쓴다).
         project: 프로젝트 이름. 생략하면 이 계정이 볼 수 있는 모든 프로젝트.
         """
-        args = {"project": session.unmask(project) if project else None}
+        args = {"project": _project_arg(session, project)}
         return _record(session, "get_project_status", args, get_project_status(session, **args))
 
     @tool("search_vuln_docs")
@@ -506,4 +548,10 @@ def build_tools(session: Session) -> list:
         """
         return _record(session, "run_scan_now", {}, run_scan_now(session))
 
-    return [propose_tool, confirm_tool, check_tool, status_tool, search_tool, scan_tool, refuse_tool]
+    built = [propose_tool, confirm_tool, check_tool, status_tool, search_tool, scan_tool, refuse_tool]
+    # 모델이 한 번에 도구를 여러 개 부르면 에이전트가 스레드로 나눠 동시에 실행한다. 도구들은 SQLite 연결 하나와
+    # 세션 상태를 함께 쓰므로 한 번에 하나씩만 돌게 잠근다(동시에 쓰면 sqlite3.InterfaceError가 난다. 평가 7번)
+    lock = threading.Lock()
+    for item in built:
+        item.func = _locked(item.func, lock)
+    return built

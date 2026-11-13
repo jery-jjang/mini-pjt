@@ -130,6 +130,15 @@ class FlakyModel(BaseChatModel):
         return ChatResult(generations=[ChatGeneration(message=AIMessage(content="CVE-2099-12345는 확인할 수 없습니다."))])
 
 
+class BlockedModel(FlakyModel):
+    """처음 몇 번은 콘텐츠 필터 차단 문구를 답으로 내는 가짜 모델."""
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        self.log.append(self.temperature)
+        text = "The generated text has been blocked by our content filters." if self.calls <= self.failures             else "CVE-2099-12345는 확인할 수 없습니다."
+        return ChatResult(generations=[ChatGeneration(message=AIMessage(content=text))])
+
+
 @pytest.fixture
 def no_wait(monkeypatch):
     """재시도 사이의 대기를 없앤다."""
@@ -143,6 +152,15 @@ def test_모델_형식_오류는_temperature를_올려_다시_불러_답한다(c
     assert llm.log == [0.0, 0.7, 0.7]  # 처음은 0, 다시 부를 때만 올린다
 
 
+def test_콘텐츠_필터_차단_응답은_다시_부른다(conn, no_wait):
+    """Nova Pro가 답 대신 차단 문구를 내면 temperature를 올려 다시 부른다(평가 18번)."""
+    llm = BlockedModel(code="", failures=1, log=[], temperature=0.0)
+    res = ask(conn, "CVE-2099-12345가 우리 프로젝트에 해당해?", llm)
+    assert "확인할 수 없습니다" in res["answer"] and llm.log == [0.0, 0.7]
+    llm = BlockedModel(code="", failures=9, log=[], temperature=0.0)  # 끝까지 막히면 그 응답을 그대로 낸다
+    assert "blocked" in ask(conn, "CVE-2099-12345가 우리 프로젝트에 해당해?", llm)["answer"] and llm.calls == 3
+
+
 @pytest.mark.parametrize("code, failures, calls", [
     ("ModelErrorException", 3, 3),   # 두 번 다시 불러도 실패하면 오류를 그대로 낸다(API는 503)
     ("ThrottlingException", 1, 1),   # 한도 초과는 다시 부르지 않는다(API는 429)
@@ -154,6 +172,15 @@ def test_재시도_한도와_대상(conn, no_wait, code, failures, calls):
     with pytest.raises(ClientError):
         ask(conn, "CVE-2099-12345가 우리 프로젝트에 해당해?", llm)
     assert llm.calls == calls
+
+
+def test_도구를_한꺼번에_여러_개_불러도_된다(conn):
+    """모델이 한 응답에 도구를 여러 개 부르면 동시에 실행된다. DB 연결을 함께 써도 오류가 없어야 한다(평가 7번)."""
+    both = AIMessage(content="", tool_calls=[
+        {"name": "get_project_status", "args": {"project": f"[프로젝트{i}]"}, "id": f"c{i}", "type": "tool_call"}
+        for i in (1, 2, 3)])
+    res = ask(conn, "전체 프로젝트 현황 요약해줘", scripted(both, AIMessage(content="현황입니다.")), "security_admin")
+    assert res["label"] == "answer" and len([s for s in res["trace"] if s["step"] == "get_project_status"]) == 3
 
 
 def test_답에_나오지_않은_취약점_문서는_근거에서_뺀다(conn):

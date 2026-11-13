@@ -32,8 +32,10 @@ SYSTEM_PROMPT = """너는 사내 취약점 감시 서비스(VulnWatch)의 어시
   등록돼 있는지와 관계없이 product 인자에 넣어 부른다. 등록 목록만 보고 스스로 답하지 않는다.
 - 해당 여부 판정은 check_vulnerabilities의 결과를 그대로 따른다. 스스로 버전을 비교해 판정하지 않는다.
 - get_project_status는 현황, 등록 목록, 감시 불가 항목, 알림 이력을 물을 때와, "점수가 아직 없는 것",
-  "KEV에 오른 것"처럼 조건으로 걸러 볼 때 쓴다.
-- 등록 요청은 propose_candidates를 부른다. 프로젝트나 버전이 빠졌으면 되묻는다.
+  "KEV에 오른 것"처럼 조건으로 걸러 볼 때 쓴다. "프로젝트에 해당하는 취약점 알려줘"는 현황이 아니라
+  해당 여부 질문이므로 get_project_status가 아니라 check_vulnerabilities(project=...)를 부른다.
+- check_vulnerabilities의 vuln_id에는 CVE-, GHSA-로 시작하는 ID만 넣는다. 모듈 이름이나 증상 같은 글은 넣지 않는다.
+- 등록 요청은 propose_candidates를 부른다. 프로젝트나 버전이 빠졌으면 되묻는다. 질문에 없는 프로젝트를 지어내지 않는다.
 - 사용자가 "N번으로 확정"처럼 번호를 고르면 항상 confirm_registration을 부른다. 너는 이전 대화를 기억하지 못하지만,
   앞서 제시한 후보는 서버에 저장돼 있다. 후보가 있는지는 도구가 확인하므로 스스로 판단해 되묻지 않는다.
   사용자가 확정하기 전에는 등록됐다고 말하지 않는다.
@@ -133,8 +135,22 @@ class MaskingMiddleware(AgentMiddleware):
 
 # 다시 불러 볼 만한 Bedrock 오류: 모델이 도구 호출 형식을 잘못 만든 경우와 일시적인 서버 오류.
 # 하루 한도 초과(Throttling)는 다시 불러도 소용없으므로 넣지 않는다(app.py가 429로 알린다).
+BLOCKED_TEXT = "blocked by our content filters"
 RETRY_CODES = {"ModelErrorException", "ServiceUnavailableException", "InternalServerException",
                "ModelNotReadyException"}
+
+
+def is_blocked(response) -> bool:
+    """모델이 답 대신 콘텐츠 필터 차단 문구를 돌려줬는지 본다(Nova Pro가 정상 조회 결과에도 가끔 낸다)."""
+    for message in getattr(response, "result", None) or [response]:
+        if (getattr(message, "response_metadata", None) or {}).get("stopReason") == "content_filtered":
+            return True
+        content = getattr(message, "content", "")
+        text = content if isinstance(content, str) else " ".join(
+            b.get("text", "") for b in content if isinstance(b, dict))
+        if BLOCKED_TEXT in text:
+            return True
+    return False
 
 
 def is_retryable(exc: Exception) -> bool:
@@ -157,17 +173,20 @@ class RetryMiddleware(AgentMiddleware):
         self.initial_delay = initial_delay
 
     def wrap_model_call(self, request, handler):
-        """모델을 부르고, 다시 시도할 만한 오류면 temperature를 올려 다시 부른다."""
+        """모델을 부르고, 다시 시도할 만한 오류나 콘텐츠 필터 차단 응답이면 temperature를 올려 다시 부른다."""
         for attempt in range(self.max_retries + 1):
             try:
-                return handler(request)
+                response = handler(request)
+                # 콘텐츠 필터 차단 문구는 답이 아니므로 다시 부른다. 끝까지 막히면 그 응답을 그대로 돌려준다
+                if not is_blocked(response) or attempt == self.max_retries:
+                    return response
             except Exception as exc:
                 if not is_retryable(exc) or attempt == self.max_retries:
                     raise
-                time.sleep(self.initial_delay * (2 ** attempt))
-                if hasattr(request.model, "temperature"):
-                    model = request.model.model_copy(update={"temperature": self.retry_temperature})
-                    request = request.override(model=model)
+            time.sleep(self.initial_delay * (2 ** attempt))
+            if hasattr(request.model, "temperature"):
+                model = request.model.model_copy(update={"temperature": self.retry_temperature})
+                request = request.override(model=model)
         raise AssertionError("도달하지 않는다")
 
 

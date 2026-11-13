@@ -71,6 +71,30 @@ def test_버전이_없으면_되묻는다(session_for, conn):
     assert storage.get_pending(conn, "team_a_member") is None
 
 
+def test_버전이_없으면_프로젝트를_보기_전에_되묻는다(session_for, conn):
+    """모델이 질문에 없는 다른 팀 프로젝트를 지어내 넣어도 차단이 아니라 버전을 되묻는다(평가 19번)."""
+    s = session_for("team_a_member")
+    result = tools.propose_candidates(s, "배치 서버", "톰캣")
+    assert result["status"] == "need_version" and set(result) == {"status", "message"}
+    assert not s.denied and storage.get_pending(conn, "team_a_member") is None
+
+
+def test_확정_안내에_등록한_항목과_프로젝트가_들어간다(session_for):
+    s = session_for("team_a_member")
+    tools.propose_candidates(s, "사내 포털", "OpenSSL 3.0.6")
+    result = tools.confirm_registration(s, 1)
+    assert result["status"] == "registered"
+    assert result["item"] in result["message"] and "사내 포털" in result["message"]
+
+
+def test_ID가_아닌_vuln_id는_무시하고_프로젝트_기준으로_본다(session_for):
+    """모델이 vuln_id에 설명 글을 넣어도 unknown_vuln으로 끝나지 않는다(평가 28번)."""
+    s = session_for("team_a_member")
+    result = tools.check_vulnerabilities(s, project="사내 포털", product="Nginx", vuln_id="mp4 모듈 관련")
+    assert result["status"] != "unknown_vuln" and "CVE-2024-7347" in ids(result)
+    assert tools.check_vulnerabilities(s, vuln_id="CVE-2099-12345")["status"] == "unknown_vuln"
+
+
 def test_후보가_없으면_감시_불가로_등록한다(session_for, conn):
     result = tools.propose_candidates(session_for(llm=FakeLLM([])), "결제 API", "자체 결제 모듈 1.0")
     assert result["status"] == "registered_unmonitored"
@@ -272,6 +296,17 @@ def test_키워드로_관련_문서를_찾는다(vulns_t1):
 
 
 # ---------------- 에이전트용 도구 ----------------
+
+def test_project_인자의_따옴표와_전체는_다듬는다(session_for):
+    """모델이 project에 '&quot;전체&quot;'를 넣어도 볼 수 있는 프로젝트 전체로 본다(평가 7번)."""
+    by_name = {t.name: t for t in tools.build_tools(session_for("security_admin"))}
+    result = json.loads(by_name["get_project_status"].invoke({"project": "&quot;전체&quot;"}))
+    assert result["status"] == "ok" and len(result["projects"]) == 3
+    assert json.loads(by_name["get_project_status"].invoke({"project": "."}))["status"] == "ok"  # 글자 없는 값은 생략으로
+    member = {t.name: t for t in tools.build_tools(session_for("team_a_member"))}
+    assert len(json.loads(member["get_project_status"].invoke({"project": "전체"}))["projects"]) == 2  # 자기 팀만
+    assert json.loads(member["get_project_status"].invoke({"project": '"배치 서버"'}))["status"] == "denied"
+
 
 def test_도구_호출은_trace에_남고_프로젝트명은_가려서_돌려준다(session_for):
     s = session_for()
