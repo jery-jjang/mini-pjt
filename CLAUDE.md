@@ -6,7 +6,7 @@
 
 ## PoC 범위
 
-- 만든다: 등록, 해당 여부 조회, 현황 조회, 취약점 설명문 검색, 거절, 주기 검색과 알림(DB 저장).
+- 만든다: 등록, 해당 여부 조회, 현황 조회, 취약점 설명문 검색, 거절, 주기 검색과 알림(DB 저장). 로컬 화면(`web/`)과 화면용 기능(등록 목록, SW 삭제, 알림함과 읽음 현황, 검색 주기·취약점 데이터 시점 설정)도 만든다.
 - 만들지 않는다: 오탐 교정(3차), 실시간 NVD/OSV 조회, 실제 메일 발송, 로그인 화면. 계정은 고정 토큰 3개(팀 A 팀원, 팀 B 팀원, 보안 담당자)로 대신한다.
 
 ## 기술 스택
@@ -46,14 +46,14 @@ README.md             산출물 규약의 README 틀을 따른다 (활용 패턴
 requirements.txt      의존성
 .gitignore            .venv/, var/, outbox/, .env, .claude, .ouroboros, .vscode, reference 제외
 Dockerfile            클린 환경 재현용 (선택. 사용자 요청으로 2026-11-13에 더함. .env와 var/는 이미지에 넣지 않는다)
-app.py                POST /query 진입점 (FastAPI). 등록 목록·설정 API와 화면 파일(/ui)도 내준다
+app.py                POST /query 진입점 (FastAPI). 등록 목록·SW 삭제·알림함·설정 API와 화면 파일(/ui)도 내준다
 src/agent.py          메인 에이전트 그래프
 src/tools.py          도메인 도구 (등록, 조회, 문서 검색, 감시)
 src/retriever.py      RAG 파이프라인 (취약점 설명문 검색)
 src/matching.py       취약점 해당 여부 판정과 알림 대상 판정 (일반 코드, LLM 호출 없음)
 src/notifier.py       알림 메일 작성과 저장, 발송 이력
 src/scheduler.py      주기 검색과 '지금 1회 실행'
-src/sources.py        취약점 정보원 (오프라인 스냅샷)
+src/sources.py        취약점 정보원 (오프라인 스냅샷 읽기, 지금 쓰는 데이터 시점 저장, 근거 문서의 참고 링크)
 src/auth.py           로그인, 토큰, 팀·역할 확인
 src/storage.py        SQLite 접근
 src/config.py         설정값 (환경 변수에서 읽고 기본값을 둔다)
