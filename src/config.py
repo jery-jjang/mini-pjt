@@ -51,7 +51,7 @@ class Settings:
     failure_notice_threshold: int  # 연속 실패 몇 회에 보안 담당자에게 알릴지
     alert_cvss_threshold: float  # 알림 기준 점수
     send_real_mail: bool  # 실제 발송 여부 (PoC에서는 파일 저장만 한다)
-    live_lookup: bool  # 실시간 NVD/OSV 조회 여부 (PoC에서는 만들지 않는다)
+    live_lookup: bool  # 실시간 NVD 갱신 여부. 켜면 주기 검색 때 등록된 제품·버전으로 NVD에서 새로 받는다
     model_id: str
     region: str
     langsmith_tracing: bool  # LangSmith 추적 여부 (.env의 LANGSMITH_TRACING)

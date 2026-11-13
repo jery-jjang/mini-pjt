@@ -27,6 +27,12 @@ async def lifespan(app: FastAPI):
     app.state.conn = conn
     if not hasattr(app.state, "llm"):
         app.state.llm = None  # None이면 요청 때 실제 Bedrock 모델을 만든다. 테스트는 가짜 모델을 넣는다
+    if settings.live_lookup and sources.live_status() is None:
+        # 실시간 모드인데 받아 둔 데이터가 없으면 한 번 받아 온다. 실패해도 서버는 뜨고 다음 주기에 다시 받는다
+        try:
+            sources.refresh_live(conn)
+        except sources.SourceError as exc:
+            logger.warning("처음 취약점 데이터를 받지 못했습니다: %s", exc)
     app.state.scheduler = None
     if settings.scheduler_enabled:  # 주기 검색 시작. 주기는 저장된 값(없으면 .env 값)
         app.state.scheduler = scheduler.Scheduler(scheduler.load_interval(conn), settings.db_path).start()
@@ -93,7 +99,9 @@ class SettingsResponse(BaseModel):
     scheduler_enabled: bool
     last_run_at: str | None
     next_run_at: str | None
-    snapshot: str  # 지금 쓰는 취약점 데이터 시점 (T1 또는 T2)
+    snapshot: str  # 지금 쓰는 취약점 데이터 시점 (T1 또는 T2). 실시간 모드에서는 쓰이지 않는다
+    data_source: str  # fixed(고정 사본) 또는 live(NVD에서 주기적으로 받음)
+    live: dict | None = None  # 실시간 모드의 마지막 갱신 요약(시각, 건수, 새로 생긴·바뀐 건수). 받은 적이 없으면 None
 
 
 class ItemOut(BaseModel):
@@ -132,11 +140,13 @@ def _account(authorization: str | None) -> dict:
 
 def _settings_status() -> dict:
     """지금의 주기 검색 설정. 주기 검색을 끈 서버는 저장된 주기만 돌려준다."""
-    snapshot = sources.current_snapshot(app.state.conn)
+    live = sources.is_live()
+    data = {"snapshot": sources.current_snapshot(app.state.conn), "data_source": "live" if live else "fixed",
+            "live": sources.live_status() if live else None}
     if app.state.scheduler:
-        return app.state.scheduler.status() | {"snapshot": snapshot}
+        return app.state.scheduler.status() | data
     return {"scan_interval_hours": scheduler.load_interval(app.state.conn), "scheduler_enabled": False,
-            "last_run_at": None, "next_run_at": None, "snapshot": snapshot}
+            "last_run_at": None, "next_run_at": None} | data
 
 
 logger = logging.getLogger("vulnwatch")
@@ -165,6 +175,8 @@ def query(body: QueryRequest, authorization: str | None = Header(default=None)):
         return agent.answer_question(app.state.conn, account, body.question, llm=app.state.llm)
     except (ClientError, BotoCoreError) as exc:
         raise _model_error(exc) from None
+    except sources.SourceError as exc:  # 실시간 모드인데 받아 둔 취약점 데이터가 없을 때
+        raise HTTPException(status_code=503, detail=str(exc)) from None
 
 
 @app.get("/projects", response_model=ProjectsResponse)

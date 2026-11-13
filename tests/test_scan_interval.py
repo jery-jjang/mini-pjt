@@ -185,7 +185,7 @@ def test_주기_검색을_끈_서버에서도_주기를_저장한다(tmp_path, m
     with TestClient(app_module.app) as c:
         res = c.put("/settings/scan-interval", json={"hours": 3}, headers=ADMIN).json()
         assert res == {"scan_interval_hours": 3, "scheduler_enabled": False, "last_run_at": None, "next_run_at": None,
-                       "snapshot": "T1"}
+                       "snapshot": "T1", "data_source": "fixed", "live": None}
 
 
 # ---------------- 취약점 데이터 시점 ----------------

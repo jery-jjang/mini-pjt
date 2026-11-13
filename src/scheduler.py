@@ -1,6 +1,6 @@
 """주기 검색과 '지금 1회 실행'.
 
-한 번의 검색: 스냅샷 읽기 -> 확정 항목의 해당 취약점 판정 -> 알림 대상 판정 -> 프로젝트별 메일 저장.
+한 번의 검색: 스냅샷 읽기(실시간 모드면 NVD에서 새로 받기) -> 확정 항목의 해당 취약점 판정 -> 알림 대상 판정 -> 프로젝트별 메일 저장.
 알림 여부는 matching.py의 일반 코드가 정한다.
 
 직접 실행(시연용):
@@ -16,22 +16,37 @@ from src import matching, notifier, sources, storage
 from src.config import get_settings, validate_interval
 
 FAILURES_KEY = "consecutive_failures"
+BASELINE_KEY = "live_baseline:{project}:{product}:{version}"  # 실시간 데이터로 처음 검색한 항목 표시
 INTERVAL_KEY = "scan_interval_hours"
 
 
-def run_once(conn, llm=None, snapshot: str | None = None, loader=None) -> dict:
-    """검색을 한 번 실행한다. loader는 취약점 목록을 돌려주는 함수(테스트에서 바꿔 끼운다)."""
+def run_once(conn, llm=None, snapshot: str | None = None, loader=None, fetch=None) -> dict:
+    """검색을 한 번 실행한다. loader는 취약점 목록을 돌려주는 함수(테스트에서 바꿔 끼운다).
+
+    실시간 모드(VULNWATCH_LIVE_LOOKUP=true)에서 snapshot과 loader를 주지 않으면 먼저 NVD에서 새로 받는다.
+    fetch는 그때 쓰는 조회 함수(테스트에서 가짜를 넣는다).
+    """
     settings = get_settings()
-    # snapshot을 주지 않으면 화면에서 바꿔 저장한 시점(없으면 설정값)을 쓴다
-    load = loader or (lambda: sources.load_snapshot(snapshot or sources.current_snapshot(conn)))
+    live = settings.live_lookup and snapshot is None and loader is None
+    refresh = None
     try:
-        vulns = load()
+        if live:
+            refresh = sources.refresh_live(conn, http=fetch)
+            vulns = sources.load_live()
+        elif loader:
+            vulns = loader()
+        else:
+            # snapshot을 주지 않으면 화면에서 바꿔 저장한 시점(없으면 설정값)을 쓴다
+            vulns = sources.load_snapshot(snapshot or sources.current_snapshot(conn))
     except sources.SourceError as exc:
         return _on_failure(conn, settings, str(exc))
     storage.set_meta(conn, FAILURES_KEY, 0)  # 성공하면 연속 실패 횟수를 지운다
 
     names = {p["key"]: p["name"] for p in storage.list_products(conn)}
     report = {"status": "ok", "checked_items": 0, "skipped_unmonitored": 0, "alerts": 0, "mails": []}
+    if live:
+        report |= {"refresh": refresh, "baseline": 0}
+    now = datetime.now().isoformat(timespec="seconds")
     for project in storage.list_projects(conn):
         to_alert: dict[str, dict] = {}
         for item in storage.list_items(conn, project["id"]):
@@ -39,14 +54,23 @@ def run_once(conn, llm=None, snapshot: str | None = None, loader=None) -> dict:
                 report["skipped_unmonitored"] += 1  # 매핑이 확정되지 않은 항목은 알림 대상에서 뺀다
                 continue
             report["checked_items"] += 1
+            # 실시간 데이터로 처음 검색하는 항목은 기준선만 잡는다: 이미 알려진 취약점을 메일로 쏟아 내지 않고
+            # 알림 이력에 baseline으로 남겨, 그 뒤 새로 생기거나 점수·KEV가 바뀐 건만 알리게 한다
+            baseline_key = BASELINE_KEY.format(project=project["id"], product=item["product"], version=item["version"])
+            first = live and storage.get_meta(conn, baseline_key) is None
             for match in matching.match_item(vulns, item["product"], item["version"]):
                 storage.save_finding(conn, project["id"], match)
                 if match["id"] in to_alert:
                     continue  # 같은 프로젝트의 같은 취약점은 한 번만 알린다
                 last = storage.last_alert(conn, project["id"], match["id"])
                 reason = matching.alert_reason(match["score"], match["kev"], last, settings.alert_cvss_threshold)
-                if reason:
+                if reason and first:
+                    storage.add_alert(conn, project["id"], match["id"], "baseline", match["score"], match["kev"], now, None)
+                    report["baseline"] += 1
+                elif reason:
                     to_alert[match["id"]] = {**match, "name": names[item["product"]], "reason": reason}
+            if first:
+                storage.set_meta(conn, baseline_key, now)
         if to_alert:
             mail_id = notifier.save_alert_mail(conn, project, list(to_alert.values()), llm=llm)
             report["alerts"] += len(to_alert)

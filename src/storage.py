@@ -259,8 +259,11 @@ def last_alert(conn, project_id: str, vuln_id: str):
     return dict(row) | {"kev": bool(row["kev"])} if row else None
 
 
-def add_alert(conn, project_id: str, vuln_id: str, reason: str, score, kev: bool, sent_at: str, mail_id: int) -> None:
-    """보낸 알림을 이력에 남긴다. mail_id는 이 알림을 담은 메일(mails 표)의 번호."""
+def add_alert(conn, project_id: str, vuln_id: str, reason: str, score, kev: bool, sent_at: str, mail_id: int | None) -> None:
+    """보낸 알림을 이력에 남긴다. mail_id는 이 알림을 담은 메일(mails 표)의 번호.
+
+    실시간 모드의 기준선 기록(reason='baseline')은 메일 없이 남기므로 mail_id가 None이다.
+    """
     conn.execute("INSERT INTO alerts (project, vuln_id, reason, score, kev, sent_at, file, mail_id) "
                  "VALUES (?, ?, ?, ?, ?, ?, '', ?)",
                  (project_id, vuln_id, reason, score, int(kev), sent_at, mail_id))

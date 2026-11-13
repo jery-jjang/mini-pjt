@@ -369,7 +369,9 @@ def get_project_status(session: Session, project: str | None = None) -> dict:
         for v in vulns:
             session.add_context(v["id"], f'{v["product"]} {v["version"]}은 영향 범위에 들어 해당함')
             v.pop("summary")  # 현황에서는 요약문을 뺀다
-        alerts = [{"vuln_id": a["vuln_id"], "reason": a["reason"], "sent_at": a["sent_at"]}
+        # 실시간 모드의 기준선 기록(baseline)은 메일을 보내지 않은 것이라 따로 밝힌다
+        alerts = [{"vuln_id": a["vuln_id"], "reason": "baseline(메일 없이 기록)" if a["reason"] == "baseline" else a["reason"],
+                   "sent_at": a["sent_at"]}
                   for a in storage.list_alerts(session.conn, proj["id"])]
         report.append({"project": proj["name"], "items": items, "vulnerabilities": vulns,
                        "unmonitored": unmonitored, "alerts": alerts})
