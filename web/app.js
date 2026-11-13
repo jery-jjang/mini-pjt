@@ -671,6 +671,16 @@ async function loadSettings() {
   }
 }
 
+const FIXED_HELP = "실시간 조회 대신 두 시점의 고정 사본을 씁니다. T2는 T1에서 점수 상승, KEV 신규 등재 등이 반영된 시점입니다. 바꾼 뒤의 주기 검색, \"지금 검색 실행해줘\", 답변이 이 시점을 씁니다. 검색을 바로 돌리지는 않습니다.";
+const LIVE_HELP = "실시간 모드입니다. 주기 검색과 \"지금 검색 실행해줘\" 때마다 등록된 제품과 버전으로 NVD에서 새로 받고, 답변과 알림은 항상 최신 데이터를 씁니다. 직전 데이터는 비교용으로만 남기므로 시점 선택은 쓰이지 않습니다.";
+
+/** 실시간 모드의 마지막 갱신을 한 줄로 적는다. */
+function liveSummary(live) {
+  if (!live) return "실시간(NVD) · 아직 받지 못함";
+  const diff = live.first ? "처음 받음" : `새로 ${live.added}건, 바뀜 ${live.changed}건`;
+  return `실시간(NVD) · ${formatTime(live.refreshed_at)} 갱신 · ${live.count}건 (${diff})`;
+}
+
 function showSettings(s) {
   $("scan-summary").textContent = s.scheduler_enabled
     ? `검색 주기 ${formatHours(s.scan_interval_hours)} · 다음 ${formatTime(s.next_run_at)}`
@@ -679,8 +689,14 @@ function showSettings(s) {
   $("set-interval").textContent = formatHours(s.scan_interval_hours);
   $("set-last").textContent = formatTime(s.last_run_at);
   $("set-next").textContent = formatTime(s.next_run_at);
-  $("set-snapshot").textContent = s.snapshot;
+  // 실시간 모드면 NVD에서 받은 최신 데이터를 쓰고, 고정 사본의 시점 선택은 쓰이지 않는다
+  const live = s.data_source === "live";
+  $("set-snapshot").textContent = live ? liveSummary(s.live) : `고정 사본 ${s.snapshot}`;
   $("snapshot-select").value = s.snapshot;
+  const locked = live || currentAccount().id !== "security_admin";
+  $("snapshot-select").disabled = locked;
+  $("snapshot-save").disabled = locked;
+  $("snapshot-help").textContent = live ? LIVE_HELP : FIXED_HELP;
   const { hours, minutes } = splitHours(s.scan_interval_hours);
   $("interval-hours").value = hours;
   $("interval-minutes").value = minutes;
