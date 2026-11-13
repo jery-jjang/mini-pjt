@@ -320,5 +320,5 @@ Windows에서 `curl -d "{...한글...}"`처럼 한글 질문을 명령줄에 직
 - `src/matching.py:35` — 해당 여부 판정(`is_affected`), `src/matching.py:99` — 알림 판정(`alert_reason`)
 - `src/auth.py:23` — 다른 팀 접근 차단(`can_access`)
 - `src/scheduler.py:22` — 검색 1회 실행(`run_once`), `src/scheduler.py:93` — 주기 검색(`Scheduler`, 재시작 없이 주기 변경), `src/notifier.py:66` — 알림 메일 저장(`save_alert_mail`)
-- `app.py:176` — `POST /query`, `app.py:339` — 설정 조회와 검색 주기·데이터 시점 변경 API, `app.py:139` — 작업 스레드별 DB 연결(`_conn`)
+- `app.py:176` — `POST /query`, `app.py:339` — 설정 조회와 검색 주기·데이터 시점 변경 API, `app.py:131` — 작업 스레드별 DB 연결(`_conn`)
 - `evaluation/run_eval.py:113` — LLM 채점(`judge_traits`), `evaluation/run_ragas.py` — RAGAS 평가
