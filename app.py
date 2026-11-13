@@ -1,6 +1,7 @@
 """API 진입점 (FastAPI). POST /query와, UI가 쓰는 등록 목록·주기 검색 설정 API, 화면 파일(/ui)."""
 
 import logging
+import threading
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 
@@ -24,7 +25,9 @@ async def lifespan(app: FastAPI):
     conn = storage.connect(settings.db_path)
     if not storage.list_projects(conn):
         storage.reset_from_seed(conn, settings.data_dir / "seed.json")
-    app.state.conn = conn
+    app.state.conn = conn  # 시작 작업과 테스트가 쓰는 연결. 요청 처리는 _conn()으로 작업 스레드마다 따로 연다
+    app.state.db_path = settings.db_path
+    app.state.db_generation = getattr(app.state, "db_generation", 0) + 1  # 다시 시작하면 스레드별 연결을 새로 연다
     if not hasattr(app.state, "llm"):
         app.state.llm = None  # None이면 요청 때 실제 Bedrock 모델을 만든다. 테스트는 가짜 모델을 넣는다
     if settings.live_lookup and sources.live_status() is None:
@@ -130,10 +133,26 @@ class ProjectsResponse(BaseModel):
     projects: list[ProjectOut]
 
 
+_local = threading.local()
+
+
+def _conn():
+    """이 요청을 처리하는 작업 스레드의 SQLite 연결. 없으면 연다.
+
+    요청들이 연결 하나를 함께 쓰면, 계정을 바꿀 때처럼 요청이 동시에 들어올 때 sqlite3 오류(500)나
+    잘못된 401이 났다. 작업 스레드마다 연결을 따로 두고, 쓰기는 SQLite가 차례로 처리한다.
+    """
+    key = (str(app.state.db_path), app.state.db_generation)
+    if getattr(_local, "key", None) != key:
+        _local.conn = storage.connect(app.state.db_path)
+        _local.key = key
+    return _local.conn
+
+
 def _account(authorization: str | None) -> dict:
     """요청한 계정을 찾는다. 모르는 토큰이면 401."""
     try:
-        return auth.resolve_account(app.state.conn, authorization)
+        return auth.resolve_account(_conn(), authorization)
     except auth.AuthError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
 
@@ -141,11 +160,11 @@ def _account(authorization: str | None) -> dict:
 def _settings_status() -> dict:
     """지금의 주기 검색 설정. 주기 검색을 끈 서버는 저장된 주기만 돌려준다."""
     live = sources.is_live()
-    data = {"snapshot": sources.current_snapshot(app.state.conn), "data_source": "live" if live else "fixed",
+    data = {"snapshot": sources.current_snapshot(_conn()), "data_source": "live" if live else "fixed",
             "live": sources.live_status() if live else None}
     if app.state.scheduler:
         return app.state.scheduler.status() | data
-    return {"scan_interval_hours": scheduler.load_interval(app.state.conn), "scheduler_enabled": False,
+    return {"scan_interval_hours": scheduler.load_interval(_conn()), "scheduler_enabled": False,
             "last_run_at": None, "next_run_at": None} | data
 
 
@@ -172,7 +191,7 @@ def query(body: QueryRequest, authorization: str | None = Header(default=None)):
     """
     account = _account(authorization)
     try:
-        return agent.answer_question(app.state.conn, account, body.question, llm=app.state.llm)
+        return agent.answer_question(_conn(), account, body.question, llm=app.state.llm)
     except (ClientError, BotoCoreError) as exc:
         raise _model_error(exc) from None
     except sources.SourceError as exc:  # 실시간 모드인데 받아 둔 취약점 데이터가 없을 때
@@ -185,7 +204,7 @@ def read_projects(authorization: str | None = Header(default=None)):
 
     모델을 부르지 않는 읽기 전용 조회다. 알림 수신 주소는 돌려주지 않는다.
     """
-    conn = app.state.conn
+    conn = _conn()
     account = _account(authorization)
     teams = {r["id"]: r["name"] for r in conn.execute("SELECT id, name FROM teams").fetchall()}
     names = {p["key"]: p["name"] for p in storage.list_products(conn)}
@@ -219,7 +238,7 @@ def delete_item(project_id: str, item_id: int, authorization: str | None = Heade
     지운 항목은 감시와 알림에서 빠지고, 알림 이력은 남는다. 같은 SW를 다시 등록하면 다시 알린다.
     모르는 토큰 401, 다른 팀 프로젝트 403, 없거나 이미 지운 항목 404.
     """
-    conn = app.state.conn
+    conn = _conn()
     account = _account(authorization)
     project = next((p for p in storage.list_projects(conn) if p["id"] == project_id), None)
     if project is None:
@@ -259,7 +278,7 @@ class MailsResponse(BaseModel):
 
 def _visible_mails(account: dict) -> list[dict]:
     """계정이 볼 수 있는 메일. 팀원은 자기 팀 프로젝트 알림만, 보안 담당자는 조회 실패 통지까지 전체."""
-    conn = app.state.conn
+    conn = _conn()
     if account["role"] == "security_admin":
         return storage.list_mails(conn)
     ids = {p["id"] for p in auth.accessible_projects(conn, account)}
@@ -268,7 +287,7 @@ def _visible_mails(account: dict) -> list[dict]:
 
 def _mail_out(mail: dict, account: dict, with_body: bool = False) -> dict:
     """메일을 화면에 보낼 모양으로 바꾼다."""
-    conn = app.state.conn
+    conn = _conn()
     names = {p["id"]: p["name"] for p in storage.list_projects(conn)}
     admin = account["role"] == "security_admin"
     return {"id": mail["id"], "kind": mail["kind"], "project": names.get(mail["project"]) if mail["project"] else None,
@@ -282,7 +301,7 @@ def _mail_out(mail: dict, account: dict, with_body: bool = False) -> dict:
 
 def _readers(mail: dict) -> list[dict]:
     """이 메일을 볼 수 있는 계정마다 읽었는지와 읽은 시각. 보안 담당자가 전달 여부를 확인할 때 쓴다."""
-    conn = app.state.conn
+    conn = _conn()
     read = storage.mail_readers(conn, mail["id"])
     project = next((p for p in storage.list_projects(conn) if p["id"] == mail["project"]), None)
     accounts = [dict(r) for r in conn.execute("SELECT * FROM accounts ORDER BY id")]
@@ -304,7 +323,7 @@ def mark_all_read(authorization: str | None = Header(default=None)):
     account = _account(authorization)
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     for mail in _visible_mails(account):
-        storage.mark_read(app.state.conn, mail["id"], account["id"], now)
+        storage.mark_read(_conn(), mail["id"], account["id"], now)
     return read_mails(authorization)
 
 
@@ -315,7 +334,7 @@ def mark_mail_read(mail_id: int, authorization: str | None = Header(default=None
     mail = next((m for m in _visible_mails(account) if m["id"] == mail_id), None)
     if mail is None:
         raise HTTPException(status_code=404, detail="메일을 찾을 수 없습니다.")
-    storage.mark_read(app.state.conn, mail_id, account["id"], datetime.now(timezone.utc).isoformat(timespec="seconds"))
+    storage.mark_read(_conn(), mail_id, account["id"], datetime.now(timezone.utc).isoformat(timespec="seconds"))
     return _mail_out(mail, account, with_body=True)
 
 
@@ -346,7 +365,7 @@ def change_snapshot(body: SnapshotRequest, authorization: str | None = Header(de
     if account["role"] != "security_admin":
         raise HTTPException(status_code=403, detail="취약점 데이터 시점은 보안 담당자만 바꿀 수 있습니다.")
     try:
-        sources.save_snapshot(app.state.conn, body.snapshot)
+        sources.save_snapshot(_conn(), body.snapshot)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return _settings_status()
@@ -362,7 +381,7 @@ def change_scan_interval(body: IntervalRequest, authorization: str | None = Head
     if account["role"] != "security_admin":
         raise HTTPException(status_code=403, detail="검색 주기는 보안 담당자만 바꿀 수 있습니다.")
     try:
-        hours = scheduler.save_interval(app.state.conn, body.hours)
+        hours = scheduler.save_interval(_conn(), body.hours)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if app.state.scheduler:
