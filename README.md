@@ -106,7 +106,7 @@ VULNWATCH_REGION=us-east-1
 
 ```
 .venv\Scripts\python -m uvicorn app:app                    서버 실행. 화면은 http://127.0.0.1:8000/ui/
-.venv\Scripts\python -m pytest tests -q                    자동 테스트 180건 (실제 LLM 호출 없음)
+.venv\Scripts\python -m pytest tests -q                    자동 테스트 181건 (실제 LLM 호출 없음)
 .venv\Scripts\python evaluation/run_eval.py --round 2      인-아웃 세트 30건 평가 (실제 Bedrock 호출. roundN_report.md를 덮어쓴다)
 .venv\Scripts\python evaluation/run_ragas.py --round 2     RAGAS 지표 (run_eval 뒤에 실행. 설치 방법은 requirements.txt 아래쪽)
 .venv\Scripts\python -m src.scheduler --snapshot T2        검색 1회 실행 (알림 메일은 DB에 저장)
@@ -124,7 +124,7 @@ docker run --rm vulnwatch python -m pytest tests -q            자동 테스트 
 docker run --rm -p 8000:8000 --env-file .env vulnwatch         서버 실행. 화면은 http://127.0.0.1:8000/ui/
 ```
 
-Docker 29.9.3(Linux 컨테이너, Python 3.14.10)에서 이미지를 빌드해, 컨테이너 안에서 자동 테스트 180건 통과와 서버 기동(`/settings`, `/projects`, `/ui/` 응답)을 확인했습니다. 실제 질문은 Bedrock 자격 증명을 `--env-file`로 줘야 답합니다. RAGAS 평가에 필요한 패키지는 이미지에 넣지 않았습니다(`requirements.txt` 아래쪽 설치 방법 참고).
+Docker 29.9.3(Linux 컨테이너, Python 3.14.10)에서 이미지를 빌드해, 컨테이너 안에서 자동 테스트 180건 통과(동시 요청 테스트를 더하기 전)와 서버 기동(`/settings`, `/projects`, `/ui/` 응답)을 확인했습니다. 실제 질문은 Bedrock 자격 증명을 `--env-file`로 줘야 답합니다. RAGAS 평가에 필요한 패키지는 이미지에 넣지 않았습니다(`requirements.txt` 아래쪽 설치 방법 참고).
 
 ### 설정
 
@@ -304,7 +304,7 @@ Windows에서 `curl -d "{...한글...}"`처럼 한글 질문을 명령줄에 직
 - CVE가 없는 GHSA 사례는 여섯 제품에서 실제 항목을 찾지 못해 교육용 가상 항목 1건으로 대신했습니다.
 - 쿼리 확장 키워드에 "vulnerability", "exploit" 같은 일반 단어가 섞여 키워드 검색에 잡음이 생깁니다. 리랭킹도 하지 않았습니다.
 - Nova Pro는 도구 선택, 도구 인자, 도구 호출 형식, 구조화 출력(채점)이 불안정합니다. 인자 검사와 재시도로 막았지만 모델 판단에 달린 부분(1번의 도구 선택, 28번의 문서 검색 호출)은 실행마다 달라질 수 있습니다. 콘텐츠 필터 차단은 두 번 다시 불러도 막히면 그 문구가 그대로 답으로 나갑니다. 모델을 바꿀 때마다 평가를 다시 돌려야 하고, LLM 채점은 답변 모델과 따로 정하는 편이 낫습니다.
-- 도구 실행 잠금은 한 요청 안에서만 겁니다. 여러 요청이 동시에 들어오면 같은 DB 연결을 함께 쓰는 문제는 남아 있습니다(로컬 시연에서는 한 사람이 씁니다).
+- 요청이 동시에 들어오면 같은 DB 연결을 함께 써서 500이 나던 문제는 작업 스레드마다 연결을 따로 열어 고쳤습니다. SQLite라 쓰기는 한 번에 하나씩 처리됩니다.
 - 요청 사이의 대화를 기억하지 않습니다. 등록 확정만 서버에 저장한 대기 후보로 이어집니다.
 - 2차 평가는 같은 30건을 보며 고친 뒤 두 번 실행한 결과입니다. 처음 보는 질문에서의 성능은 반영되지 않았고, 두 번으로는 모델 응답의 편차를 다 알 수 없습니다.
 
@@ -320,5 +320,5 @@ Windows에서 `curl -d "{...한글...}"`처럼 한글 질문을 명령줄에 직
 - `src/matching.py:35` — 해당 여부 판정(`is_affected`), `src/matching.py:99` — 알림 판정(`alert_reason`)
 - `src/auth.py:23` — 다른 팀 접근 차단(`can_access`)
 - `src/scheduler.py:22` — 검색 1회 실행(`run_once`), `src/scheduler.py:93` — 주기 검색(`Scheduler`, 재시작 없이 주기 변경), `src/notifier.py:66` — 알림 메일 저장(`save_alert_mail`)
-- `app.py:157` — `POST /query`, `app.py:320` — 설정 조회와 검색 주기·데이터 시점 변경 API
+- `app.py:176` — `POST /query`, `app.py:339` — 설정 조회와 검색 주기·데이터 시점 변경 API, `app.py:139` — 작업 스레드별 DB 연결(`_conn`)
 - `evaluation/run_eval.py:113` — LLM 채점(`judge_traits`), `evaluation/run_ragas.py` — RAGAS 평가
