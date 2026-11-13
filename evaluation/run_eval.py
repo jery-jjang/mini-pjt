@@ -90,26 +90,43 @@ JUDGE_PROMPT = ChatPromptTemplate.from_messages([
 ])
 
 
+def _ask_judge(llm, schema, inputs: dict, ok):
+    """채점 모델에 물어 ok(결과)가 참인 답을 돌려준다. 세 번 물어도 못 얻으면 마지막 결과(없으면 None)."""
+    result = None
+    for attempt in range(3):
+        # 빈 값, 형식이 안 맞는 판정, 다시 불러 볼 만한 모델 오류면 더 묻는다. temperature 0에서는 같은
+        # 잘못된 출력이 되풀이되므로 다시 물을 때는 올린다(에이전트 재시도와 같은 방식)
+        model = llm.model_copy(update={"temperature": 0.7}) if attempt and hasattr(llm, "temperature") else llm
+        try:
+            result = (JUDGE_PROMPT | model.with_structured_output(schema)).invoke(
+                inputs, config={"run_name": "vulnwatch-eval-judge"})
+        except Exception as exc:
+            if not agent.is_retryable(exc) or attempt == 2:
+                raise
+            time.sleep(2 ** attempt)
+            continue
+        if result is not None and ok(result):
+            break
+    return result
+
+
 def judge_traits(llm, masker, question: str, answer: str, traits: list[str]) -> list[dict]:
     """글자 그대로는 확인되지 않는 기대 항목을 모델이 판정한다. 프로젝트명과 팀명은 가려서 보낸다."""
-    chain = JUDGE_PROMPT | llm.with_structured_output(Judgement)
-    inputs = {
-        "question": masker.mask(question),
-        "answer": masker.mask(answer),
-        "traits": "\n".join(f"- {masker.mask(t)}" for t in traits),
-    }
-    result = None
-    for _ in range(2):  # 모델이 정해진 형식으로 답하지 않으면(빈 값) 한 번 더 묻는다
-        result = chain.invoke(inputs, config={"run_name": "vulnwatch-eval-judge"})
-        if result is not None:
-            break
-    if result is None:
-        # 채점을 못 한 것이지 답이 틀린 것은 아니므로 실패가 아니라 오류로 남긴다
-        raise RuntimeError("채점 모델이 판정 형식으로 답하지 않았습니다(2회)")
-    verdicts = result.verdicts
-    if len(verdicts) != len(traits):
-        return [{"trait": t, "met": False, "reason": "채점 모델이 항목 수를 맞추지 못함"} for t in traits]
-    return [{"trait": t, "met": v.met, "reason": v.reason} for t, v in zip(traits, verdicts)]
+    base = {"question": masker.mask(question), "answer": masker.mask(answer)}
+    masked = [masker.mask(t) for t in traits]
+    result = _ask_judge(llm, Judgement, base | {"traits": "\n".join(f"- {t}" for t in masked)},
+                        lambda r: len(r.verdicts) == len(traits))
+    if result is not None and len(result.verdicts) == len(traits):
+        return [{"trait": t, "met": v.met, "reason": v.reason} for t, v in zip(traits, result.verdicts)]
+    # 채점 모델이 판정 개수를 못 맞추면(Nova Pro가 항목 1개에 판정 2개를 내기도 한다) 항목을 하나씩 따로 묻는다
+    verdicts = []
+    for trait, text in zip(traits, masked):
+        one = _ask_judge(llm, TraitVerdict, base | {"traits": f"- {text}"}, lambda r: True)
+        if one is None:
+            # 채점을 못 한 것이지 답이 틀린 것은 아니므로 실패가 아니라 오류로 남긴다
+            raise RuntimeError("채점 모델이 판정 형식으로 답하지 않았습니다(3회)")
+        verdicts.append({"trait": trait, "met": one.met, "reason": one.reason})
+    return verdicts
 
 
 # ---------------- 채점 ----------------
