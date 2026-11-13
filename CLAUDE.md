@@ -18,7 +18,7 @@
 - API 서버는 FastAPI, 저장소는 SQLite, 테스트는 pytest
 - 문서 검색은 하이브리드다: ID 정확 일치, LLM 쿼리 확장(한글 검색어 → 영어 키워드, 구조화 출력), `rank-bm25` 키워드 검색과 Bedrock Titan 임베딩(`amazon.titan-embed-text-v2:0`, `VULNWATCH_EMBED_MODEL_ID`) 의미 검색을 RRF로 합친다. 의미 검색은 유사도 0.2 미만을 버린다. 문서 임베딩은 `var/doc_embeddings.json`에 캐시한다
 - 쿼리 확장이나 임베딩이 실패하면 키워드 검색만으로 계속한다. 테스트는 가짜 모델·가짜 임베딩을 넣어 외부를 호출하지 않는다
-- 에이전트 미들웨어는 두 개다: 재시도(`ModelErrorException`과 일시적 서버 오류만 최대 2번, 다시 부를 때 temperature 0.7, 한도 초과는 재시도하지 않음)와 모델 앞 이름 가리기 안전망. 질문과 도구 결과를 가리는 일은 LangSmith 기록 때문에 미들웨어로 옮기지 않는다
+- 에이전트 미들웨어는 두 개다: 재시도(`ModelErrorException`과 일시적 서버 오류, 모델이 답 대신 돌려준 콘텐츠 필터 차단 문구만 최대 2번, 다시 부를 때 temperature 0.7, 한도 초과는 재시도하지 않음)와 모델 앞 이름 가리기 안전망. 질문과 도구 결과를 가리는 일은 LangSmith 기록 때문에 미들웨어로 옮기지 않는다
 - 추적(트레이스)은 LangSmith와 로컬 기록 두 곳에 남긴다. LangSmith는 `.env`의 `LANGSMITH_TRACING=true`일 때 켜지고, 요청마다 `vulnwatch-query` 실행으로 남는다. 같은 `run_id`를 응답의 `trace`가 담긴 로컬 기록 `var/traces.jsonl`에도 적어 둘을 잇는다
 - LangSmith로 가는 것은 모델 입력과 출력, 도구 입력과 출력뿐이고 모두 프로젝트명·팀명을 가린 글이다. 메타데이터에는 역할만 넣고 계정·팀·프로젝트 이름을 넣지 않는다
 - `tests/`는 `conftest.py`에서 `LANGSMITH_TRACING=false`로 고정해 외부로 아무것도 보내지 않는다
@@ -30,8 +30,8 @@ python -m venv .venv                      가상환경 만들기 (처음 한 번
 .venv\Scripts\python -m pip install -r requirements.txt   의존성 설치
 .venv\Scripts\python -m uvicorn app:app   서버 실행 (화면은 http://127.0.0.1:8000/ui/)
 .venv\Scripts\python -m pytest tests -q   배선 테스트 (실제 LLM 호출 없음)
-.venv\Scripts\python evaluation/run_eval.py --round 1    30건 평가 (실제 Bedrock 호출)
-.venv\Scripts\python evaluation/run_ragas.py --round 1   RAGAS 지표 (run_eval 뒤에 실행. 설치 방법은 requirements.txt 아래쪽)
+.venv\Scripts\python evaluation/run_eval.py --round 2    30건 평가 (실제 Bedrock 호출. roundN_report.md를 덮어쓴다)
+.venv\Scripts\python evaluation/run_ragas.py --round 2   RAGAS 지표 (run_eval 뒤에 실행. 설치 방법은 requirements.txt 아래쪽)
 .venv\Scripts\python -m src.scheduler --snapshot T2      검색 1회 실행 (시연용)
 .venv\Scripts\python -m src.storage --load-demo          로컬 DB에 시연용 등록 항목 추가 (평가 뒤 다시 실행)
 .venv\Scripts\python -m src.notifier --list             DB에 저장된 알림 메일 목록 (--show N 으로 본문)
@@ -83,6 +83,9 @@ web/                  로컬 화면 (빌드 없는 HTML·CSS·JS. 서버가 /ui�
 - SW 삭제는 지금 화면에서만 한다(`DELETE /projects/{project_id}/items/{item_id}`). 대화로 지우는 도구는 아직 만들지 않는다. 팀원은 자기 팀 프로젝트, 보안 담당자는 전체를 지울 수 있고 권한은 코드가 확인한다. 한 요청에 한 항목만 지운다.
 - 삭제는 표시만 한다(soft delete): 항목 상태를 `removed`로 바꾸고 `item_removals`에 이전 상태·시각·계정을 남긴다. `storage.list_items`가 삭제된 항목을 빼므로 조회·현황·주기 검색·중복 확인에서 모두 빠진다. 알림 이력(`alerts`)은 지우지 않는다.
 - 지운 SW를 다시 등록하면 알림을 다시 보낸다: 삭제로 프로젝트에 같은 표준 제품이 하나도 남지 않으면 그 제품의 탐지 기록(`findings`)을 지우고 관련 취약점마다 `alert_resets`에 그때까지의 마지막 알림 번호를 남긴다. `last_alert`는 그 번호 뒤의 알림만 본다.
+- 모델이 틀리게 넣는 도구 인자는 도구 안의 코드가 바로잡는다(프롬프트 규칙에만 기대지 않는다). `check_vulnerabilities`의 `vuln_id`가 `CVE-`·`GHSA-`로 시작하지 않으면 무시하고 프로젝트·제품 기준으로 본다. `project` 인자는 따옴표와 HTML 표기를 벗기고, "전체"나 글자 없는 값은 생략으로 본다(생략하면 그 계정이 볼 수 있는 프로젝트만 본다). 등록 후보 제시는 제품 이름과 버전부터 확인하고 그다음에 프로젝트 권한을 확인한다(버전이 없으면 프로젝트와 무관하게 되묻는다).
+- 한 요청 안의 도구는 잠금으로 한 번에 하나씩만 실행한다(도구들이 SQLite 연결 하나를 함께 쓴다).
+- LLM 채점(`run_eval.py`)은 채점 모델이 오류를 내거나 판정 개수를 못 맞추면 temperature를 올려 다시 묻고, 그래도 안 맞으면 항목을 하나씩 따로 묻는다.
 - 중복 등록은 도구 안의 코드가 막는다(LLM 판단에 맡기지 않는다). 같은 프로젝트에서 감시 중 항목은 표준 제품과 버전이 같으면, 감시 불가 항목은 입력 문장이 같으면(띄어쓰기·대소문자 무시) 중복이다. 다른 프로젝트나 다른 버전은 중복이 아니고, 버전 표기는 맞추지 않는다("1.24"와 "1.24.0"은 다르다). 후보 제시 때 같은 입력 문장이나 저장된 매핑으로 중복이 드러나면 후보를 내지 않고, 확정 때 한 번 더 확인해 추가하지 않는다. 이때 상태는 `already_registered`, 라벨은 `answer`다.
 - 프로젝트와 프로젝트별 알림 수신 주소는 `data/`의 초기 시드에 넣어 둔다. 대화로 프로젝트를 새로 만드는 기능은 만들지 않는다.
 - UI용 설정 API: `GET /settings`(누구나)는 `scan_interval_hours`, `scheduler_enabled`, `last_run_at`, `next_run_at`을 돌려준다. `PUT /settings/scan-interval`(보안 담당자만, 본문 `{"hours": 숫자}`)은 검색 주기를 바꾸고 같은 형식으로 돌려준다. 팀원·토큰 없음은 403, 모르는 토큰은 401, 0 이하나 숫자가 아닌 값은 422.
