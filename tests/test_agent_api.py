@@ -443,3 +443,19 @@ def test_API_보안_담당자는_메일별로_누가_읽었는지_본다(client)
     done = c.post("/mails/read-all", headers=admin).json()
     assert done["unread_count"] == 0 and all(m["read"] for m in done["mails"])
     assert c.get("/mails", headers={"Authorization": "Bearer demo-token-team-b"}).json()["unread_count"] == 1
+
+
+def test_동시에_들어온_요청도_오류_없이_처리한다(client):
+    client, _ = client
+    """계정을 바꿀 때 화면이 여러 요청을 한꺼번에 보낸다. 연결 하나를 함께 쓰면 500이나 잘못된 401이 났다."""
+    import concurrent.futures
+
+    tokens = ["demo-token-team-a", "demo-token-team-b", "demo-token-security"]
+    paths = ["/projects", "/mails", "/settings"]
+
+    def hit(i):
+        return client.get(paths[i % 3], headers={"Authorization": f"Bearer {tokens[(i // 3) % 3]}"}).status_code
+
+    with concurrent.futures.ThreadPoolExecutor(12) as pool:
+        codes = list(pool.map(hit, range(180)))
+    assert set(codes) == {200}
